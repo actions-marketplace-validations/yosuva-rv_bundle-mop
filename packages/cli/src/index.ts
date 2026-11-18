@@ -1,5 +1,8 @@
 import { pathToFileURL } from 'node:url';
 
+export * from './adapter/index.js';
+export * from './model/sizes.js';
+
 export const VERSION = '0.0.0';
 
 export const HELP = `bundle-mop v${VERSION}

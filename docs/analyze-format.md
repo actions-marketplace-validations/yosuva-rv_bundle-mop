@@ -149,6 +149,23 @@ loaded by the route's `client_bootstrap` entry). That approach would drop them.
 Verified in `fixtures/dynamic-barrel` (see its `EXPECTED.md`): `/lazy` total 635,263 B includes
 a 61,657 B lazy-only chunk (moment + `Heavy.tsx`), so first-load is 573,606 B.
 
+## Adapter (`packages/cli/src/adapter/`)
+
+`parseNextAnalyzeExport(text)` / `parseNextAnalyzeLines(lines)` → `AnalyzeSnapshot`:
+
+- **Validates** each record. A schema version it doesn't know, malformed JSON (with the line number), wrongly typed
+  fields, or a missing `meta` all throw `AdapterError`. Unknown record types, coverage gaps and a route count that
+  doesn't match `meta` go into `warnings`. `allowUnknownSchema` parses a newer schema anyway, with a warning.
+- **Normalises** every module path and part `source_path` to a `SourceRef` whose `key` is stable across machines and
+  package managers: `app:<path in app>`, `pkg:<name>/<subpath>` (version kept separately; pnpm only),
+  `workspace:<path>`, `internal:<path>`, `external:<name>`. The app root is detected from the root `app/layout.*`.
+- **Annotates** modules (`layer`, `isClientBoundary`, `isDynamicEntry`, `isServerComponent`, `modifier: 'locals'`)
+  and parts/outputs (`isClient`, `isLazy` / `isLazyOnly` from async-only groups).
+- `routeSizes()` in `src/model/sizes.ts` derives `client` / `firstLoad` / `lazy` sizes. Tests check `client` against
+  Next's own `route-summaries.json` for every route of every fixture.
+
+Verified against both committed fixtures (pnpm monorepo) and a scratch npm app (`appRoot` `''`, same keys, no versions).
+
 ## What this means for Bundle Mop
 
 | Need | Available? |

@@ -19,7 +19,7 @@ WHY (import chains), and suggests fixes with a deterministic rules engine.
 
 ## Rules
 - Before calling anything done, run `pnpm typecheck && pnpm test && pnpm build` and show the output.
-- All analyzer-format parsing lives in ONE adapter module. Nothing else reads raw JSONL.
+- All analyzer-format parsing lives in `packages/cli/src/adapter/`. Nothing else reads raw JSONL; everything else uses its normalised types (`AnalyzeSnapshot`, `SourceRef.key`).
 - Tests read committed snapshots and never run `next build` or `next analyze`.
 - Fixtures are test data. Don't add feature code to them, and don't "fix" their intentional regressions.
 - Never change snapshots and the code that consumes them in the same commit without saying so explicitly.
