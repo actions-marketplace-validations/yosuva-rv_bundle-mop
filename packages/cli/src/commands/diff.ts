@@ -5,6 +5,7 @@ import { AdapterError, parseNextAnalyzeExport } from '../adapter/index.js';
 import type { AnalyzeSnapshot } from '../adapter/index.js';
 import { diffSnapshots } from '../model/diff.js';
 import { renderTextDiff } from '../report/text.js';
+import { runRules } from '../rules/index.js';
 
 export interface CommandResult {
   code: number;
@@ -53,8 +54,14 @@ export function diffCommand(argv: string[]): CommandResult {
 
   const [baseFile, prFile] = positionals as [string, string];
   try {
-    const diff = diffSnapshots(readSnapshot(baseFile), readSnapshot(prFile));
-    return { code: 0, output: values.json ? JSON.stringify(diff, null, 2) : renderTextDiff(diff, { top }) };
+    const base = readSnapshot(baseFile);
+    const pr = readSnapshot(prFile);
+    const diff = diffSnapshots(base, pr);
+    const findings = runRules(diff, base, pr);
+    return {
+      code: 0,
+      output: values.json ? JSON.stringify({ ...diff, findings }, null, 2) : renderTextDiff(diff, { top, findings }),
+    };
   } catch (e) {
     return { code: 1, output: `error: ${(e as Error).message}` };
   }

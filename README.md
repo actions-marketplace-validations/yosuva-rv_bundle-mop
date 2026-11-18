@@ -2,13 +2,22 @@
 
 > Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
 
-**Status: early.** The analyzer adapter, base-vs-PR diff and import-chain "why" work. Rules and the GitHub Action are next.
+**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why" and rules engine work. The PR comment and the GitHub Action are next.
 
 ```
 /dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)
   + pkg:moment/moment.js   +61.3 kB first-load  (added)
       why: app/dashboard/page.tsx → components/DashboardClient.tsx ("use client") → components/DatePicker.tsx → moment/moment.js
+
+Suggestions:
+  ! [heavy-package] moment adds 61.3 kB to first-load JS  (/dashboard)
+      → Use dayjs (similar API), date-fns (tree-shakeable; optimized by Next by default), or Intl.DateTimeFormat for plain formatting.
+  i [lazy-load-candidate] Lazy-load components/DatePicker.tsx to keep moment out of first-load JS  (/dashboard)
+        // components/DashboardClient.tsx
+        const DatePicker = dynamic(() => import('./DatePicker'));
 ```
+
+Rules are listed in [docs/rules.md](docs/rules.md).
 
 ```sh
 # in your Next.js 16 app, on each side of the change:

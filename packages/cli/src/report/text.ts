@@ -1,18 +1,14 @@
 import { formatChain } from '../model/chains.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
+import type { Finding } from '../rules/types.js';
 
 /** How many modules per route get a `why:` chain line. */
 const WHY_LIMIT = 3;
 const grew = (m: ContributionDiff) => m.firstLoad.delta > 0 || m.lazy.delta > 0;
 
-/** `64 B`, `61.3 kB` (1 kB = 1000 B, like Next.js). */
-export function formatBytes(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? '-' : '';
-  return abs < 1000 ? `${sign}${abs} B` : `${sign}${(abs / 1000).toFixed(1)} kB`;
-}
+import { formatBytes, formatDelta } from '../util/format.js';
 
-export const formatDelta = (n: number): string => (n > 0 ? `+${formatBytes(n)}` : n === 0 ? '±0 B' : formatBytes(n));
+export { formatBytes, formatDelta };
 
 const pct = (d: Delta): string => {
   if (d.base === 0) return 'new';
@@ -63,6 +59,19 @@ function routeBlock(r: RouteDiff, top: number): string[] {
 export interface TextOptions {
   /** Max modules listed per route (default 10). */
   top?: number;
+  /** Rule findings to list under "Suggestions". */
+  findings?: Finding[];
+}
+
+const SEVERITY_MARK: Record<Finding['severity'], string> = { error: 'x', warning: '!', info: 'i' };
+
+function findingBlock(f: Finding): string[] {
+  const routes = f.routes.length > 3 ? `${f.routes.slice(0, 3).join(', ')} +${f.routes.length - 3} more` : f.routes.join(', ');
+  const lines = [`  ${SEVERITY_MARK[f.severity]} [${f.ruleId}] ${f.title}  (${routes})`];
+  if (f.message) lines.push(`      ${f.message}`);
+  if (f.suggestion) lines.push(...f.suggestion.split('\n').map((l, i) => `      ${i === 0 ? '→ ' : '  '}${l}`.trimEnd()));
+  if (f.docs) lines.push(`      docs: ${f.docs}`);
+  return lines;
 }
 
 export function renderTextDiff(diff: SnapshotDiff, options: TextOptions = {}): string {
@@ -76,6 +85,10 @@ export function renderTextDiff(diff: SnapshotDiff, options: TextOptions = {}): s
   for (const r of diff.routes) {
     if (r.status === 'unchanged') continue;
     out.push('', ...routeBlock(r, top));
+  }
+  if (options.findings?.length) {
+    out.push('', 'Suggestions:');
+    for (const f of options.findings) out.push(...findingBlock(f));
   }
   if (diff.warnings.length) out.push('', 'Warnings:', ...diff.warnings.map((w) => `  ! ${w}`));
   return out.join('\n');
