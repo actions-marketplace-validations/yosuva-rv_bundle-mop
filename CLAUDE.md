@@ -25,6 +25,7 @@ WHY (import chains), and suggests fixes with a deterministic rules engine.
 - Never change snapshots and the code that consumes them in the same commit without saying so explicitly.
 - Every bug report becomes a new fixture plus a committed snapshot to compare against.
 - Regenerating snapshots after a Next upgrade: note the Next version (it's in `capture.json`) and update `docs/analyze-format.md`.
+- Sizes: raw `part.size` is the exact metric; summed `compressed_size` overstates gzip (label it estimated); first-load JS excludes `async` groups. Diff on route + normalised path, never chunk filename. Details in `docs/analyze-format.md`.
 - Normalise machine-specific paths (pnpm `.pnpm/<pkg>@<ver>_<hash>`) before comparing anything.
 - Keep CLI runtime dependencies at zero unless there's a clear reason. Ask before adding one.
 - Rules engine stays deterministic. AI explanations are optional and opt-in (`--ai`, the user's own key).

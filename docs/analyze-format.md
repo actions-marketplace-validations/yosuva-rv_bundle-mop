@@ -18,12 +18,17 @@ contract. All parsing must live in one adapter module so a format change touches
 Base-vs-PR flow this enables: `--snapshot base` on the base branch, `--snapshot pr` on the PR,
 then `export --snapshot base` / `export --snapshot pr` and diff.
 
+`export` is plain JS: `next/dist/build/analyze/graph-dump.js` decodes the binary `*.data`
+files and writes records with `writeSync`. Its own comment warns that a validation error
+**may leave partial output**, so always check the exit code before using stdout.
+
 ## Files on disk (`.next/diagnostics/analyze/`)
 
 - `history/history.json` lists snapshots: `name`, `createdAt`, `nextVersion`, `gitBranch`, `gitDirty`, `appDirOnly`, `noMangling`, `routeCount`.
-- `history/snapshot-<name>/route-summaries.json` gives **per-route totals directly**:
+- `history/snapshot-<name>/route-summaries.json` gives per-route totals:
   `{ route, size, compressed_size, client: { size, compressed_size } }`. The `client` numbers equal
-  the sum of that route's `[client-fs]` `part` records (verified: `/` = 576,405 B / 214,764 B gz).
+  the sum of that route's `[client-fs]` `part` records. ⚠️ These totals **include lazily loaded
+  (`next/dynamic`) chunks** and **overstate compressed size** (see below), so they are not first-load JS.
 - `*.data` files are a binary/internal encoding. Don't parse them; use `export`.
 - The rest (`*.html`, `_next/`) is the interactive UI.
 
@@ -42,19 +47,28 @@ The order is the `meta` record, then all `module` records, then for each route: 
 
 ### `module`: the import graph
 
-- `ident` is the unique node id: `<path> [<layer>] (<kind>)`. The same file shows up once per layer:
+- `ident` is the unique node id: `<path> [<layer>] (<kind>)[ <suffix>]`. The same file shows up once per layer:
   - `[app-rsc]` server components (RSC)
   - `[app-ssr]` server-side render of client components
   - `[app-client]` **browser bundle** (what we measure)
   - `(client reference proxy)` marks a **`"use client"` boundary**
+  - `(ecmascript, next/dynamic entry)` marks the target of a **`next/dynamic` import**
+  - suffix ` <locals>` appears on barrel files (for example `ui/index.ts [app-client] (ecmascript) <locals>`)
 - `dependencies.sync` / `async` contain **edges to other `ident`s**, so the full import chain is
-  available. `async` covers dynamic imports. `traced` was empty everywhere in this fixture.
-- `path` is relative to **`[project]` = the workspace root** (monorepo root), not the app dir.
-  So app files look like `[project]/fixtures/basic/app/page.tsx`.
-- pnpm paths include a **machine-specific hash**:
-  `node_modules/.pnpm/next@16.4.6_@types+node@22._1e2e5987…/node_modules/next/...`. The adapter
-  must normalise to `package@version/subpath` before diffing base and PR.
-- Other prefixes seen: `[externals]/path` (Node built-ins), `.next-internal/…/actions.js`.
+  available. `async` holds dynamic imports (verified: `LazyClient.tsx` → async → `Heavy.tsx (… next/dynamic entry)`).
+  `traced` was empty everywhere.
+- ⚠️ **An edge does not mean bytes shipped.** A barrel's `<locals>` node has sync edges to every
+  re-export, including ones that were tree-shaken. In the scratch test, an unused `Unused.tsx`
+  re-export still had an edge but only contributed an **11-byte** part. Always weight chains by
+  `part` sizes, never by edges alone.
+- Paths are relative to **`[project]`**, the root Turbopack picked:
+  - **pnpm monorepo**: the workspace root, so app files look like `[project]/fixtures/basic/app/page.tsx` and packages like
+    `[project]/node_modules/.pnpm/next@16.4.6_@types+node@22._1e2e5987…/node_modules/next/...`
+    (the **hash differs by machine and lockfile**)
+  - **standalone npm app**: the app dir, so `[project]/app/page.tsx` and `[project]/node_modules/moment/moment.js`
+  - The adapter must normalise both to `app:<relative path>` and `pkg:<name>@<version>/<subpath>`
+    before diffing. It gets the version from the `.pnpm/<name>@<ver>` segment, or from the package's `package.json` for npm.
+- Other prefixes seen: `[externals]/<builtin>` (Node built-ins), `.next-internal/…/actions.js`.
 
 **Verified chain** for the intentional regression on `/dashboard`:
 
@@ -69,67 +83,103 @@ fixtures/basic/app/dashboard/page.tsx            [app-rsc] (Server Component)
 Finding the chain means a reverse BFS from the heavy `[app-client]` module to the route's
 entry modules. That's feasible with this data.
 
-Side observation: `moment.js [app-ssr]` has sync edges to every `moment/locale/*.js`, while
-`moment.js [app-client]` has none. Layers can have different subgraphs, so always pick the
-layer explicitly.
+Layers have different subgraphs: `moment.js [app-ssr]` has sync edges to every
+`moment/locale/*.js`, while `moment.js [app-client]` has none. Always pick the layer explicitly.
 
 ### `route`
 
 `entries[]` items contain `route_entry_id`, `module_ident`, `module_path`, `role` (`route`),
 and `entry_kind` (`server` | `client_bootstrap`). Entries are where chain searches end.
-`coverage` was `{"entries":"exact","groups":"exact"}` for every route.
+`coverage.entries` / `coverage.groups` are `exact` or (per the reader source) `unknown`.
+Treat `unknown` as "don't trust per-route attribution".
 
 ### `output`: chunks
 
 One per emitted file per route. `filename` prefixes:
 - `[client-fs]/_next/static/chunks/*.js` are browser chunks
-- `[output]/fixtures/basic/.next/server/...` are server chunks
+- `[output]/<app>/.next/server/...` are server chunks
 - `[project]/...` are non-chunk entries (`coverage: "not_a_chunk"`)
 
 `coverage` is `exact` | `not_a_chunk` | `unsupported`. `modules[]` lists the module idents in the chunk.
+`async_loaders[]` lists `next/dynamic entry` idents whose loader code sits in this chunk.
+
+Chunk **filenames are content hashes**. They're identical across captures of identical code, but
+they will change whenever code changes, and they don't match `next build` filenames. **Never key
+diffs on filename.** Key on `route` + normalised `source_path`.
 
 ### `part`: sizes (the numbers we diff)
 
-A `part` is the contribution of one `source_path` (file) to one output `filename` for one route:
-`size` (raw bytes) and `compressed_size` (bytes; gzip assumed, **not confirmed** by any field).
+A `part` is the contribution of one `source_path` (file) to one output `filename` for one route.
 
-**Route client JS = sum of `part` records where `filename` starts with `[client-fs]`.**
+- **`size` = minified production bytes.** It matches the real build: moment part 61,346 B,
+  `moment.min.js` 60,887 B, and the `next build` chunk containing moment 61,976 B. Per-file raw
+  sums are within ~0.1% of the matching `next build` chunk.
+- **`compressed_size` ≈ gzip of each part compressed on its own.** A one-part file matches gzip of the
+  real file exactly (`0cz1d0mv5g_q7.js`: 39,434 vs 39,627; moment chunk: 19,679 vs 19,759); brotli
+  would be ~10% smaller (moment: 17,646). But summing parts **overstates** whole-file gzip
+  because each small part loses the shared dictionary: 1.06× to **1.89×** on multi-part chunks.
+  `/dashboard` client: sum of parts 230,541 vs ~198 KB real gzip of all built chunks.
 
-| route | client raw | client compressed |
+| route | client raw | client compressed (part sum) |
 |---|---:|---:|
 | `/` | 576,405 | 214,764 |
 | `/dashboard` | 630,550 | 230,541 |
 | moment part on `/dashboard` | 61,346 | 19,308 |
+
+The ~576 KB raw on a near-empty page is real: it's the minified React DOM + Next client runtime
+(the largest framework chunk alone is ~229 KB). Bundle Mop should report **deltas**, not absolute
+"your page is huge" warnings.
 
 `part.source_path` is a plain path **without a layer tag**, so joining sizes to graph nodes is
 by path, plus filtering to `[app-client]` idents.
 
 ### `group`
 
-`kind`: `bootstrap` | `render_dependent`. `trigger_join`: `joined`. Each group lists the `outputs`
-that a `trigger_module_ident` (for example `layout.tsx`) causes to load. This is probably how we
-separate the shared/first-load set from per-route chunks.
+`kind`: `bootstrap` | `render_dependent` | `async`. `trigger_join`: `joined`.
+Each group lists the `outputs` that a `trigger_module_ident` causes to load.
+- `bootstrap` is the runtime every page loads.
+- `render_dependent` is triggered by a layout, page or client component the route renders.
+- `async` is triggered by a `next/dynamic entry`. Its outputs are **lazy**.
+
+**First-load JS for a route = `[client-fs]` parts in outputs reachable from `bootstrap` +
+`render_dependent` groups, excluding outputs that appear only in `async` groups.**
+Verified in the scratch app: `/lazy` `route-summaries` client total is 635,362 B and includes
+the 61,474 B moment chunk that only loads after the `next/dynamic` import resolves.
 
 ## What this means for Bundle Mop
 
 | Need | Available? |
 |---|---|
-| Per-route client JS (raw + compressed) | ✅ `route-summaries.json`, or sum `part` |
+| Per-route client JS (raw) | ✅ sum `part.size`. Use raw as the primary, exact metric. |
+| Per-route compressed size | ⚠️ part sums overstate by up to ~1.9×. Label it "est." or compress per file ourselves |
+| First-load vs lazy split | ✅ via `group.kind` (`async` = lazy). `route-summaries.json` mixes them. |
 | Per-module size within a route | ✅ `part.source_path` |
-| Import chain (why a module is included) | ✅ `module.dependencies` edges |
+| Import chain (why a module is included) | ✅ `module.dependencies` edges, weighted by part size |
 | `"use client"` boundary detection | ✅ `(client reference proxy)` ident |
+| `next/dynamic` detection | ✅ `(… next/dynamic entry)` ident + `async` edges + `async` groups |
+| Barrel file detection | ✅ ` <locals>` suffix; check part sizes to see what was really shipped |
 | Server vs client vs SSR split | ✅ layer tag in `ident` |
-| Package name + version | ✅ derivable from path (needs pnpm/npm/yarn normalisation) |
-| Duplicate package versions | ✅ the same package under two `pkg@ver` paths |
-| Dynamic imports (`next/dynamic`) | ⚠️ `dependencies.async` exists; not exercised yet |
+| Package name + version | ✅ derivable from path (pnpm hash or npm plain path) |
+| Duplicate package versions | ✅ the same package under two `name@ver` paths (pnpm). For npm, nested `node_modules` |
+| Deterministic captures | ✅ byte-identical export from a clean `.next` (same `module_index_hash`) |
 
-## Open questions (next spikes)
+## Answered questions (2026-11-18)
 
-1. Is `compressed_size` gzip or brotli? Check the Next source or compare with a real build.
-2. Raw client JS on `/` is ~576 KB for a near-empty page. Does the analyzer measure unminified or
-   non-mangled code (it says it does not produce an app build)? Compare against `next build` chunk sizes.
-3. Are idents and paths stable between two captures of identical code (the `module_index_hash`)?
-   Capture `base` twice and diff.
-4. Do the shapes for npm and yarn match pnpm (path prefixes)?
-5. Does `--route` filtering also filter `module` records? (It would shrink CI payloads.)
-6. Add a fixture with `next/dynamic` and a barrel import to see the `async` edges.
+1. **gzip or brotli?** gzip-like, computed per part. Matches whole-file gzip for one-part files;
+   overstates for multi-part files (see `part`).
+2. **Why ~576 KB raw on `/`?** It's real minified framework code (matches `next build` within ~0.1%), not unminified output.
+3. **Stable between captures?** Yes. Two captures of identical code, the second after deleting `.next`,
+   are byte-identical except `snapshot_name`. Chunk filenames are stable for identical code but change with any code change.
+4. **npm / yarn shapes?** npm (standalone app): `[project]` = app dir, plain `node_modules/<pkg>/…`
+   paths with no hash. yarn is **not tested** (not installed here), so check Yarn PnP before claiming support.
+5. **Does `--route` filter `module` records?** No. The reader always writes every `module` record
+   and filters only `route`/`output`/`part`/`group`. CI payload size is dominated by modules anyway.
+6. **`next/dynamic` and barrels?** See `module` / `group` above. Tested in a scratch npm copy of
+   the fixture (not committed). A committed `fixtures/dynamic-barrel` is still to do.
+
+## Still open
+
+- Yarn (classic and PnP) path shapes.
+- How `compressed_size` behaves with `--no-mangling` (probably irrelevant for CI).
+- Route groups, parallel routes and `layout.tsx` sharing across routes (shared-chunk attribution).
+- Duplicate package versions: needs a fixture to confirm the path shape.
