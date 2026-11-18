@@ -1,4 +1,9 @@
+import { formatChain } from '../model/chains.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
+
+/** How many modules per route get a `why:` chain line. */
+const WHY_LIMIT = 3;
+const grew = (m: ContributionDiff) => m.firstLoad.delta > 0 || m.lazy.delta > 0;
 
 /** `64 B`, `61.3 kB` (1 kB = 1000 B, like Next.js). */
 export function formatBytes(n: number): string {
@@ -42,7 +47,14 @@ function routeBlock(r: RouteDiff, top: number): string[] {
   if (r.status === 'changed') {
     const shown = r.modules.slice(0, top);
     const width = Math.min(60, Math.max(0, ...shown.map((m) => m.key.length)));
-    lines.push(...shown.map((m) => moduleLine(m, width)));
+    let why = 0;
+    for (const m of shown) {
+      lines.push(moduleLine(m, width));
+      if (m.chain && grew(m) && why < WHY_LIMIT && m.chain.steps.length > 1) {
+        lines.push(`      why: ${formatChain(m.chain)}`);
+        why++;
+      }
+    }
     if (r.modules.length > top) lines.push(`  … ${r.modules.length - top} more changed module(s)`);
   }
   return lines;

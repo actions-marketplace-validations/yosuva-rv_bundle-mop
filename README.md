@@ -2,7 +2,13 @@
 
 > Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
 
-**Status: early.** The analyzer adapter and base-vs-PR diff work. Import-chain explanations, rules and the GitHub Action are next.
+**Status: early.** The analyzer adapter, base-vs-PR diff and import-chain "why" work. Rules and the GitHub Action are next.
+
+```
+/dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)
+  + pkg:moment/moment.js   +61.3 kB first-load  (added)
+      why: app/dashboard/page.tsx → components/DashboardClient.tsx ("use client") → components/DatePicker.tsx → moment/moment.js
+```
 
 ```sh
 # in your Next.js 16 app, on each side of the change:

@@ -174,6 +174,30 @@ modules plus a per-package rollup, sorted by first-load impact. Module statuses:
 (size, gzip estimate or version set differs). It also flags `movedTo: 'lazy' | 'firstLoad'` and version changes (pnpm).
 CLI: `bundle-mop diff <base.jsonl[.gz]> <pr.jsonl[.gz]> [--json] [--top n]`.
 
+## Import chains (`packages/cli/src/model/chains.ts`)
+
+`new RouteGraph(snapshot, route)` runs one BFS from the route's entries (server entry first; sync edges before async)
+and keeps the shortest-path tree. On the fixtures it reaches ~525 of 1,047 modules, only the route's own subgraph.
+`chainToKey(key)` / `chainToPackage(name)` return the shortest chain to an `[app-client]` module:
+
+- Consecutive graph nodes for one file (RSC node → `client reference proxy` → `[app-client]` node) collapse into
+  one step, which carries `isClientBoundary`, `viaDynamicImport`, `isServerComponent` and `isBarrel` (`<locals>`).
+- Next's entry glue (`templates/app-page.js`) before the first app/workspace file is dropped.
+- `importer` = the last app/workspace file before the chain enters the target package: where to change the import.
+- `clientBoundary` = the `"use client"` file the chain crosses.
+
+`diffSnapshots` attaches a chain to every changed module and package (PR side; base side for removed ones).
+The text report prints `why:` under the top 3 growing modules per route. Verified chains:
+
+```
+/dashboard: app/dashboard/page.tsx → components/DashboardClient.tsx ("use client") → components/DatePicker.tsx → moment/moment.js
+/lazy:      app/lazy/page.tsx → components/LazyClient.tsx ("use client") → components/ui/Heavy.tsx (dynamic import) → moment/moment.js
+/lazy:      app/lazy/page.tsx → components/LazyClient.tsx ("use client") → components/ui/index.ts (barrel) → components/ui/Unused.tsx
+```
+
+Note that Turbopack rewrites used barrel re-exports into direct edges (`LazyClient → Badge.tsx`), so a barrel appears
+in a chain only when the barrel node itself is on the path.
+
 **Noise is real.** Source that didn't change can still shift by a few bytes, because of minifier name mangling:
 `DashboardClient.tsx` −29 B in the `basic-before → basic` pair, and Next framework modules ±2–105 B between two different apps.
 The diff reports everything exactly. Thresholds and filtering belong in the report layer.

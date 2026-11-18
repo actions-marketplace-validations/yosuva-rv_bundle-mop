@@ -4,6 +4,7 @@ import { diffCommand } from './commands/diff.js';
 export * from './adapter/index.js';
 export * from './model/sizes.js';
 export * from './model/diff.js';
+export * from './model/chains.js';
 export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
 
 export const VERSION = '0.0.0';

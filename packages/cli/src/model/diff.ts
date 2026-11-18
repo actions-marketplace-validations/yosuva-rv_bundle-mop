@@ -1,6 +1,8 @@
 // Base-vs-PR diff over normalised snapshots. Keys are SourceRef keys and route paths,
 // never chunk filenames (those are content hashes and change with any code change).
 import type { AnalyzeSnapshot, ChunkPart, RouteData, SourceKind } from '../adapter/types.js';
+import { RouteGraph } from './chains.js';
+import type { ImportChain } from './chains.js';
 import { routeSizes } from './sizes.js';
 
 export type ChangeStatus = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -28,6 +30,8 @@ export interface ContributionDiff {
   versions?: { base: string[]; pr: string[] };
   /** Moved between first-load and lazy (e.g. wrapped in / unwrapped from next/dynamic). */
   movedTo?: 'lazy' | 'firstLoad';
+  /** Why it's in the bundle: shortest import chain from the route entry (PR side; base side for removed). */
+  chain?: ImportChain;
 }
 
 export interface RouteDiff {
@@ -169,10 +173,36 @@ export function diffRoute(route: string, base: RouteData | undefined, pr: RouteD
 
 const STATUS_ORDER: Record<ChangeStatus, number> = { changed: 0, added: 1, removed: 2, unchanged: 3 };
 
-export function diffSnapshots(base: AnalyzeSnapshot, pr: AnalyzeSnapshot): SnapshotDiff {
+export interface DiffOptions {
+  /** Attach import chains to changed modules and packages (default true). */
+  chains?: boolean;
+}
+
+function attachChains(r: RouteDiff, base: AnalyzeSnapshot, pr: AnalyzeSnapshot) {
+  const graphs = new Map<AnalyzeSnapshot, RouteGraph | undefined>();
+  const graphFor = (snap: AnalyzeSnapshot) => {
+    if (!graphs.has(snap)) graphs.set(snap, snap.routes.has(r.route) ? new RouteGraph(snap, r.route) : undefined);
+    return graphs.get(snap);
+  };
+  const sideOf = (c: ContributionDiff) => (c.status === 'removed' ? base : pr);
+  for (const m of r.modules) {
+    const chain = graphFor(sideOf(m))?.chainToKey(m.key);
+    if (chain) m.chain = chain;
+  }
+  for (const p of r.packages) {
+    const chain = p.packageName ? graphFor(sideOf(p))?.chainToPackage(p.packageName) : undefined;
+    if (chain) p.chain = chain;
+  }
+}
+
+export function diffSnapshots(base: AnalyzeSnapshot, pr: AnalyzeSnapshot, options: DiffOptions = {}): SnapshotDiff {
   const names = new Set([...base.routes.keys(), ...pr.routes.keys()]);
   const routes = [...names]
-    .map((r) => diffRoute(r, base.routes.get(r), pr.routes.get(r)))
+    .map((r) => {
+      const d = diffRoute(r, base.routes.get(r), pr.routes.get(r));
+      if (options.chains !== false && (d.modules.length || d.packages.length)) attachChains(d, base, pr);
+      return d;
+    })
     .sort(
       (a, b) =>
         STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||

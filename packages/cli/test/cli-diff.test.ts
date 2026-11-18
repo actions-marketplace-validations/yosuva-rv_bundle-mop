@@ -27,6 +27,9 @@ describe('bundle-mop diff', () => {
     expect(output).toContain('1 changed, 0 added, 0 removed, 3 unchanged route(s)');
     expect(output).toContain('/dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)');
     expect(output).toMatch(/\+ pkg:moment\/moment\.js\s+\+61\.3 kB first-load {2}\(added\)/);
+    expect(output).toContain(
+      'why: app/dashboard/page.tsx → components/DashboardClient.tsx ("use client") → components/DatePicker.tsx → moment/moment.js',
+    );
     expect(output).not.toContain('/_not-found'); // unchanged routes are only counted
   });
 
@@ -41,7 +44,7 @@ describe('bundle-mop diff', () => {
   it('limits listed modules with --top', () => {
     const { output } = run(['diff', BASE, PR, '--top', '1']);
     expect(output).toContain('… 2 more changed module(s)');
-    expect(output).not.toContain('DatePicker');
+    expect(output).not.toContain('~ app:components/DatePicker.tsx');
   });
 
   it('reads plain .jsonl too', () => {
