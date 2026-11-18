@@ -596,6 +596,33 @@ function formatBytes(n) {
 }
 var formatDelta = (n) => n > 0 ? `+${formatBytes(n)}` : n === 0 ? "\xB10 B" : formatBytes(n);
 
+// ../cli/src/report/rows.ts
+var PACKAGE_GROUP_MIN = 3;
+function routeRows(route, groupMin = PACKAGE_GROUP_MIN) {
+  const byPackage = /* @__PURE__ */ new Map();
+  for (const m of route.modules) {
+    if (!m.packageName) continue;
+    const list = byPackage.get(m.packageName);
+    if (list) list.push(m);
+    else byPackage.set(m.packageName, [m]);
+  }
+  const grouped = /* @__PURE__ */ new Set();
+  const rows = [];
+  for (const p of route.packages) {
+    const mods = p.packageName ? byPackage.get(p.packageName) : void 0;
+    if (!mods || mods.length < groupMin) continue;
+    grouped.add(p.packageName);
+    rows.push({ ...p, isPackage: true, moduleCount: mods.length });
+  }
+  for (const m of route.modules) {
+    if (m.packageName && grouped.has(m.packageName)) continue;
+    rows.push({ ...m, isPackage: false, moduleCount: 1 });
+  }
+  return rows.sort(
+    (x, y) => Math.abs(y.firstLoad.delta) - Math.abs(x.firstLoad.delta) || Math.abs(y.lazy.delta) - Math.abs(x.lazy.delta) || x.key.localeCompare(y.key)
+  );
+}
+
 // ../cli/src/report/markdown.ts
 var COMMENT_MARKER = "<!-- bundle-mop:comment -->";
 var GITHUB_LIMIT = 65536;
@@ -646,30 +673,35 @@ function routeTable(routes) {
 function noteFor(m) {
   const notes = [];
   if (m.status === "added" || m.status === "removed") notes.push(m.status);
+  if (m.isPackage) notes.push(`${m.moduleCount} modules`);
   if (m.movedTo) notes.push(`moved to ${m.movedTo === "lazy" ? "lazy" : "first-load"}`);
   if (m.versions) notes.push(`${m.versions.base.join(", ") || "?"} \u2192 ${m.versions.pr.join(", ") || "?"}`);
   return notes.join("; ");
 }
+var rowLabel = (row) => row.isPackage ? row.packageName ?? shortKey(row.key) : shortKey(row.key);
+var countModules = (rows) => rows.reduce((a, r) => a + r.moduleCount, 0);
 function routeDetails(r, opts, open) {
-  const mods = r.modules.filter((m) => moduleSignificant(m, opts.minBytes));
-  const hidden = r.modules.length - mods.length;
-  if (!mods.length) return [];
-  const shown = mods.slice(0, opts.top);
+  const all = routeRows(r);
+  const rows = all.filter((m) => moduleSignificant(m, opts.minBytes));
+  const hiddenModules = countModules(all) - countModules(rows);
+  if (!rows.length) return [];
+  const shown = rows.slice(0, opts.top);
+  const changed = countModules(rows);
   const lines = [
-    `<details${open ? " open" : ""}><summary><b>${r.route.replace(/[<>&]/g, "")}</b>: ${mods.length} changed module${mods.length === 1 ? "" : "s"}</summary>`,
+    `<details${open ? " open" : ""}><summary><b>${r.route.replace(/[<>&]/g, "")}</b>: ${changed} changed module${changed === 1 ? "" : "s"}</summary>`,
     "",
     "| Module | First-load | Lazy | |",
     "|---|---:|---:|---|",
     ...shown.map(
-      (m) => `| ${code(shortKey(m.key), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ""} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ""} | ${noteFor(m)} |`
+      (m) => `| ${code(rowLabel(m), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ""} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ""} | ${noteFor(m)} |`
     )
   ];
   const more = [];
-  if (mods.length > shown.length) more.push(`${mods.length - shown.length} more`);
-  if (hidden) more.push(`${hidden} smaller change${hidden === 1 ? "" : "s"} under ${formatBytes(opts.minBytes)}`);
+  if (rows.length > shown.length) more.push(`${rows.length - shown.length} more`);
+  if (hiddenModules) more.push(`${hiddenModules} smaller change${hiddenModules === 1 ? "" : "s"} under ${formatBytes(opts.minBytes)}`);
   if (more.length) lines.push("", `<sub>Not shown: ${more.join(", ")}.</sub>`);
   const whys = shown.filter((m) => m.chain && m.chain.steps.length > 1 && (m.firstLoad.delta > 0 || m.lazy.delta > 0)).slice(0, opts.whyLimit);
-  for (const m of whys) lines.push("", `**Why ${code(shortKey(m.key))} ships:** ${formatChainMarkdown(m.chain)}`);
+  for (const m of whys) lines.push("", `**Why ${code(rowLabel(m))} ships:** ${formatChainMarkdown(m.chain)}`);
   lines.push("", "</details>");
   return lines;
 }

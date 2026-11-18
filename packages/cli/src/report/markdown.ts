@@ -4,6 +4,8 @@ import type { ImportChain } from '../model/chains.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
 import type { Finding } from '../rules/types.js';
 import { formatBytes, formatDelta } from '../util/format.js';
+import { routeRows } from './rows.js';
+import type { ReportRow } from './rows.js';
 
 /** First line of every comment, so the GitHub Action can find and update its own comment. */
 export const COMMENT_MARKER = '<!-- bundle-mop:comment -->';
@@ -88,36 +90,43 @@ function routeTable(routes: RouteDiff[]): string[] {
   return ['| Route | First-load JS | Change | Lazy change |', '|---|---:|---:|---:|', ...rows];
 }
 
-function noteFor(m: ContributionDiff): string {
+function noteFor(m: ReportRow): string {
   const notes: string[] = [];
   if (m.status === 'added' || m.status === 'removed') notes.push(m.status);
+  if (m.isPackage) notes.push(`${m.moduleCount} modules`);
   if (m.movedTo) notes.push(`moved to ${m.movedTo === 'lazy' ? 'lazy' : 'first-load'}`);
   if (m.versions) notes.push(`${m.versions.base.join(', ') || '?'} → ${m.versions.pr.join(', ') || '?'}`);
   return notes.join('; ');
 }
 
+const rowLabel = (row: ReportRow) => (row.isPackage ? (row.packageName ?? shortKey(row.key)) : shortKey(row.key));
+const countModules = (rows: ReportRow[]) => rows.reduce((a, r) => a + r.moduleCount, 0);
+
 function routeDetails(r: RouteDiff, opts: Required<Omit<MarkdownOptions, 'findings' | 'maxLength'>>, open: boolean): string[] {
-  const mods = r.modules.filter((m) => moduleSignificant(m, opts.minBytes));
-  const hidden = r.modules.length - mods.length;
-  if (!mods.length) return [];
-  const shown = mods.slice(0, opts.top);
+  const all = routeRows(r);
+  // A package row is judged by its total, so many small files that add up are not hidden as noise.
+  const rows = all.filter((m) => moduleSignificant(m, opts.minBytes));
+  const hiddenModules = countModules(all) - countModules(rows);
+  if (!rows.length) return [];
+  const shown = rows.slice(0, opts.top);
+  const changed = countModules(rows);
   const lines = [
-    `<details${open ? ' open' : ''}><summary><b>${r.route.replace(/[<>&]/g, '')}</b>: ${mods.length} changed module${mods.length === 1 ? '' : 's'}</summary>`,
+    `<details${open ? ' open' : ''}><summary><b>${r.route.replace(/[<>&]/g, '')}</b>: ${changed} changed module${changed === 1 ? '' : 's'}</summary>`,
     '',
     '| Module | First-load | Lazy | |',
     '|---|---:|---:|---|',
     ...shown.map(
       (m) =>
-        `| ${code(shortKey(m.key), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ''} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ''} | ${noteFor(m)} |`,
+        `| ${code(rowLabel(m), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ''} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ''} | ${noteFor(m)} |`,
     ),
   ];
   const more: string[] = [];
-  if (mods.length > shown.length) more.push(`${mods.length - shown.length} more`);
-  if (hidden) more.push(`${hidden} smaller change${hidden === 1 ? '' : 's'} under ${formatBytes(opts.minBytes)}`);
+  if (rows.length > shown.length) more.push(`${rows.length - shown.length} more`);
+  if (hiddenModules) more.push(`${hiddenModules} smaller change${hiddenModules === 1 ? '' : 's'} under ${formatBytes(opts.minBytes)}`);
   if (more.length) lines.push('', `<sub>Not shown: ${more.join(', ')}.</sub>`);
 
   const whys = shown.filter((m) => m.chain && m.chain.steps.length > 1 && (m.firstLoad.delta > 0 || m.lazy.delta > 0)).slice(0, opts.whyLimit);
-  for (const m of whys) lines.push('', `**Why ${code(shortKey(m.key))} ships:** ${formatChainMarkdown(m.chain as ImportChain)}`);
+  for (const m of whys) lines.push('', `**Why ${code(rowLabel(m))} ships:** ${formatChainMarkdown(m.chain as ImportChain)}`);
   lines.push('', '</details>');
   return lines;
 }

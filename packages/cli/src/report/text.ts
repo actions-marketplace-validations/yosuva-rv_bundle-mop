@@ -1,14 +1,15 @@
 import { formatChain } from '../model/chains.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
 import type { Finding } from '../rules/types.js';
+import { formatBytes, formatDelta } from '../util/format.js';
+import { routeRows } from './rows.js';
+import type { ReportRow } from './rows.js';
+
+export { formatBytes, formatDelta };
 
 /** How many modules per route get a `why:` chain line. */
 const WHY_LIMIT = 3;
 const grew = (m: ContributionDiff) => m.firstLoad.delta > 0 || m.lazy.delta > 0;
-
-import { formatBytes, formatDelta } from '../util/format.js';
-
-export { formatBytes, formatDelta };
 
 const pct = (d: Delta): string => {
   if (d.base === 0) return 'new';
@@ -18,13 +19,14 @@ const pct = (d: Delta): string => {
 
 const MARK: Record<ContributionDiff['status'], string> = { added: '+', removed: '-', changed: '~', unchanged: ' ' };
 
-function moduleLine(m: ContributionDiff, width: number): string {
+function moduleLine(m: ReportRow, width: number): string {
   const parts: string[] = [];
   if (m.firstLoad.delta) parts.push(`${formatDelta(m.firstLoad.delta)} first-load`);
   if (m.lazy.delta) parts.push(`${formatDelta(m.lazy.delta)} lazy`);
   if (!parts.length) parts.push(`${formatDelta(m.compressed.delta)} gzip est.`);
   const notes: string[] = [];
   if (m.status === 'added' || m.status === 'removed') notes.push(m.status);
+  if (m.isPackage) notes.push(`${m.moduleCount} modules`);
   if (m.movedTo) notes.push(`moved to ${m.movedTo === 'lazy' ? 'lazy' : 'first-load'}`);
   if (m.versions) notes.push(`${m.versions.base.join(',') || '?'} → ${m.versions.pr.join(',') || '?'}`);
   return `  ${MARK[m.status]} ${m.key.padEnd(width)}  ${parts.join(', ')}${notes.length ? `  (${notes.join('; ')})` : ''}`;
@@ -41,7 +43,8 @@ function routeBlock(r: RouteDiff, top: number): string[] {
   const lines = [head];
   if (r.lazy.raw.delta) lines.push(`  lazy ${formatBytes(r.lazy.raw.base)} → ${formatBytes(r.lazy.raw.pr)}  (${formatDelta(r.lazy.raw.delta)})`);
   if (r.status === 'changed') {
-    const shown = r.modules.slice(0, top);
+    const rows = routeRows(r);
+    const shown = rows.slice(0, top);
     const width = Math.min(60, Math.max(0, ...shown.map((m) => m.key.length)));
     let why = 0;
     for (const m of shown) {
@@ -51,7 +54,7 @@ function routeBlock(r: RouteDiff, top: number): string[] {
         why++;
       }
     }
-    if (r.modules.length > top) lines.push(`  … ${r.modules.length - top} more changed module(s)`);
+    if (rows.length > top) lines.push(`  … ${rows.length - top} more changed module(s)`);
   }
   return lines;
 }
