@@ -72,7 +72,7 @@ jobs:
       - name: Bundled action is up to date
         run: |
           pnpm -F bundle-mop-action build
-          if ! git diff --exit-status -- packages/action/dist; then
+          if ! git diff --exit-code -- packages/action/dist; then
             echo "::error::packages/action/dist is stale. Run 'pnpm -F bundle-mop-action build' and commit the result."
             exit 1
           fi
