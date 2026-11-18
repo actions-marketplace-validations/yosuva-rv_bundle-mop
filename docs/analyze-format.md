@@ -166,6 +166,18 @@ a 61,657 B lazy-only chunk (moment + `Heavy.tsx`), so first-load is 573,606 B.
 
 Verified against both committed fixtures (pnpm monorepo) and a scratch npm app (`appRoot` `''`, same keys, no versions).
 
+## Diff (`packages/cli/src/model/diff.ts`)
+
+`diffSnapshots(base, pr)` compares routes by path and sources by `SourceRef.key` (never chunk filename).
+For each route it reports `client` / `firstLoad` / `lazy` deltas (raw exact, compressed estimated) and the changed
+modules plus a per-package rollup, sorted by first-load impact. Module statuses: `added`, `removed`, `changed`
+(size, gzip estimate or version set differs). It also flags `movedTo: 'lazy' | 'firstLoad'` and version changes (pnpm).
+CLI: `bundle-mop diff <base.jsonl[.gz]> <pr.jsonl[.gz]> [--json] [--top n]`.
+
+**Noise is real.** Source that didn't change can still shift by a few bytes, because of minifier name mangling:
+`DashboardClient.tsx` −29 B in the `basic-before → basic` pair, and Next framework modules ±2–105 B between two different apps.
+The diff reports everything exactly. Thresholds and filtering belong in the report layer.
+
 ## What this means for Bundle Mop
 
 | Need | Available? |

@@ -15,7 +15,8 @@ WHY (import chains), and suggests fixes with a deterministic rules engine.
 - `pnpm typecheck` / `pnpm test` / `pnpm build`: CLI package
 - `pnpm -F bundle-mop dev`: tsup watch
 - `pnpm fixtures:build`: `next build` every fixture
-- `node scripts/snapshot-fixture.mjs <fixture> [name]`: regenerate `fixtures/<fixture>/__snapshots__/analyze/<name>/`
+- `node packages/cli/dist/index.js diff fixtures/basic-before/__snapshots__/analyze/base/export.jsonl.gz fixtures/basic/__snapshots__/analyze/base/export.jsonl.gz`: diff the reference pair
+- `node scripts/snapshot-fixture.mjs <fixture> [name] [focusRoute]`: regenerate `fixtures/<fixture>/__snapshots__/analyze/<name>/`
 
 ## Rules
 - Before calling anything done, run `pnpm typecheck && pnpm test && pnpm build` and show the output.

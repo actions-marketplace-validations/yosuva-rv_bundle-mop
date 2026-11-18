@@ -1,7 +1,10 @@
 import { pathToFileURL } from 'node:url';
+import { diffCommand } from './commands/diff.js';
 
 export * from './adapter/index.js';
 export * from './model/sizes.js';
+export * from './model/diff.js';
+export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
 
 export const VERSION = '0.0.0';
 
@@ -11,18 +14,22 @@ Explains every PR's Next.js bundle change: which import, through which chain,
 and how to fix it.
 
 Usage:
+  bundle-mop diff <base-export> <pr-export> [--json] [--top <n>]
+                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz)
   bundle-mop --help       Show this help
   bundle-mop --version    Show version
 
 Commands (coming soon):
-  compare --base <ref>    Diff next analyze snapshots between base and PR
+  compare --base <ref>    Capture base and PR snapshots and diff them
 `;
 
 export function run(argv: string[]): { code: number; output: string } {
-  if (argv.includes('--version') || argv.includes('-v')) {
+  const [command, ...rest] = argv;
+  if (command === 'diff') return diffCommand(rest);
+  if (command === '--version' || command === '-v') {
     return { code: 0, output: VERSION };
   }
-  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
+  if (command === undefined || command === '--help' || command === '-h') {
     return { code: 0, output: HELP };
   }
   return { code: 1, output: `Unknown command: ${argv.join(' ')}\n\n${HELP}` };

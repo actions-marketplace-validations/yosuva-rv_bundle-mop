@@ -1,0 +1,13 @@
+{
+  "name": "base",
+  "createdAt": "2026-11-18T18:19:06.234Z",
+  "nextVersion": "16.4.6",
+  "gitBranch": "main",
+  "gitSha": "5158c79ae73d57946a142645b6e5f99af3a2d690",
+  "gitShortSha": "5158c79",
+  "gitDirty": true,
+  "gitMessage": "feat(cli): add next analyze adapter and route size model",
+  "appDirOnly": false,
+  "noMangling": false,
+  "routeCount": 4
+}

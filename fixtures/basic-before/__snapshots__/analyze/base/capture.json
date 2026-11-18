@@ -1,0 +1,24 @@
+{
+  "fixture": "basic-before",
+  "snapshot": "base",
+  "nextVersion": "16.4.6",
+  "node": "v22.17.0",
+  "platform": "win32",
+  "capturedAt": "2026-11-18T18:19:07.417Z",
+  "commands": [
+    "next analyze --output --snapshot base",
+    "next analyze export --snapshot base"
+  ],
+  "recordCounts": {
+    "meta": 1,
+    "module": 906,
+    "route": 4,
+    "output": 540,
+    "part": 2279,
+    "group": 47
+  },
+  "sample": {
+    "focusRoute": "/dashboard",
+    "records": 239
+  }
+}
