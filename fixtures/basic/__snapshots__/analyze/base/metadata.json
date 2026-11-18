@@ -1,0 +1,10 @@
+{
+  "name": "base",
+  "createdAt": "2026-11-18T17:40:03.427Z",
+  "nextVersion": "16.4.6",
+  "gitBranch": "main",
+  "gitDirty": true,
+  "appDirOnly": false,
+  "noMangling": false,
+  "routeCount": 4
+}
