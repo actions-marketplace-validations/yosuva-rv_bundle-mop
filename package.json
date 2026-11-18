@@ -7,9 +7,9 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "build": "pnpm -F bundle-mop build",
-    "test": "pnpm -F bundle-mop test",
-    "typecheck": "pnpm -F bundle-mop typecheck",
+    "build": "pnpm -r --filter \"./packages/*\" build",
+    "test": "pnpm -r --filter \"./packages/*\" test",
+    "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
     "fixtures:build": "pnpm -F \"./fixtures/*\" build"
   }
 }

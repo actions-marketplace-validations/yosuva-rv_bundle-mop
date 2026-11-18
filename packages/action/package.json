@@ -1,0 +1,19 @@
+{
+  "name": "bundle-mop-action",
+  "private": true,
+  "version": "0.0.0",
+  "description": "GitHub Action wrapper for Bundle Mop. Bundled into dist/index.mjs (committed) and run by /action.yml.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "8.5.1",
+    "typescript": "6.0.3",
+    "vitest": "5.1.0"
+  }
+}

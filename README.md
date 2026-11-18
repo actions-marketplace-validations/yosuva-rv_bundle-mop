@@ -2,8 +2,28 @@
 
 > Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
 
-**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine and markdown PR comment work. The GitHub Action is next.
-See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
+**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine, markdown PR comment and
+GitHub Action work. See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
+
+## GitHub Action
+
+```yaml
+on: pull_request
+permissions: { contents: read, pull-requests: write }
+jobs:
+  bundle-mop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - uses: yosuva-rv/bundle-mop@main
+```
+
+Inputs, outputs, forks and security: [docs/action.md](docs/action.md).
+
+## CLI
 
 ```
 /dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)

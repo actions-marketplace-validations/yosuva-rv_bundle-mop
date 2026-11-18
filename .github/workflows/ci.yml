@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   cli:
-    name: CLI (typecheck, test, build)
+    name: Packages (typecheck, test, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +27,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: node packages/cli/dist/index.js --version
+      - run: node packages/cli/dist/bin.js --version
 
   fixtures:
     name: Fixtures (next build + analyze)
@@ -52,3 +52,38 @@ jobs:
               && head -c 300 /tmp/export.jsonl && echo)
             echo "::endgroup::"
           done
+
+  action:
+    name: Action (self-test on fixtures/basic)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # comment on same-repo PRs; fork PRs get a read-only token and only a warning
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # HEAD~1 is the base on pushes
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bundled action is up to date
+        run: |
+          pnpm -F bundle-mop-action build
+          if ! git diff --exit-status -- packages/action/dist; then
+            echo "::error::packages/action/dist is stale. Run 'pnpm -F bundle-mop-action build' and commit the result."
+            exit 1
+          fi
+      - name: Run Bundle Mop (this repo's action)
+        id: mop
+        uses: ./
+        with:
+          working-directory: fixtures/basic
+          base-ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'HEAD~1' }}
+      - name: Check outputs
+        run: |
+          test -s "${{ steps.mop.outputs.report-path }}"
+          test -s "${{ steps.mop.outputs.json-path }}"
+          echo "routes-changed=${{ steps.mop.outputs.routes-changed }} largest-first-load-delta=${{ steps.mop.outputs.largest-first-load-delta }} findings=${{ steps.mop.outputs.findings }}"

@@ -4,8 +4,16 @@
   "description": "Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.",
   "license": "MIT",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
-    "bundle-mop": "./dist/index.js"
+    "bundle-mop": "./dist/bin.js"
   },
   "files": [
     "dist"
