@@ -7,6 +7,8 @@ export * from './model/diff.js';
 export * from './model/chains.js';
 export * from './rules/index.js';
 export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
+export { COMMENT_MARKER, formatChainMarkdown, renderMarkdown } from './report/markdown.js';
+export type { MarkdownOptions } from './report/markdown.js';
 
 export const VERSION = '0.0.0';
 
@@ -16,7 +18,7 @@ Explains every PR's Next.js bundle change: which import, through which chain,
 and how to fix it.
 
 Usage:
-  bundle-mop diff <base-export> <pr-export> [--json] [--top <n>]
+  bundle-mop diff <base-export> <pr-export> [--format text|markdown|json] [--top <n>] [--min-bytes <n>]
                           Diff two \`next analyze export\` files (.jsonl / .jsonl.gz)
   bundle-mop --help       Show this help
   bundle-mop --version    Show version

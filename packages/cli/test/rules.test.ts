@@ -97,6 +97,11 @@ describe('rules: synthetic cases', () => {
     expect(withLowThreshold[0]).toMatchObject({ ruleId: 'heavy-package', title: 'moment grows first-load JS by 500 B' });
   });
 
+  it('never flags anything below minBytes, even rules with their own threshold', () => {
+    const f = findingsFor(loadSnapshot('basic-before'), loadSnapshot('basic'), { minBytes: 100_000 });
+    expect(f).toEqual([]);
+  });
+
   it('does not suggest lazy loading or server rendering for code already behind a dynamic import', () => {
     const m = pnpm('moment', '2.31.0', 'moment.js');
     const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, { path: m, size: 61_000, lazy: true }], widgetGraph([ident(m)], { async: true })));

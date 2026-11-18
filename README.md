@@ -2,7 +2,8 @@
 
 > Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
 
-**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why" and rules engine work. The PR comment and the GitHub Action are next.
+**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine and markdown PR comment work. The GitHub Action is next.
+See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
 
 ```
 /dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)
@@ -24,8 +25,10 @@ Rules are listed in [docs/rules.md](docs/rules.md).
 next analyze --output --snapshot base && next analyze export --snapshot base > base.jsonl
 next analyze --output --snapshot pr   && next analyze export --snapshot pr   > pr.jsonl
 
-bundle-mop diff base.jsonl pr.jsonl          # text summary
-bundle-mop diff base.jsonl pr.jsonl --json   # full diff
+bundle-mop diff base.jsonl pr.jsonl                     # text summary
+bundle-mop diff base.jsonl pr.jsonl --format markdown   # PR comment
+bundle-mop diff base.jsonl pr.jsonl --format json       # full diff + findings
+bundle-mop diff base.jsonl pr.jsonl --min-bytes 2000    # raise the noise floor (default 1000 B)
 ```
 
 Bundle Mop compares `next analyze` snapshots (Next.js 16, Turbopack) between your base branch and

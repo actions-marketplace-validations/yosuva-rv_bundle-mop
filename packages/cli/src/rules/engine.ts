@@ -17,6 +17,8 @@ const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warning: 1, info: 2
 export function runRules(diff: SnapshotDiff, base: AnalyzeSnapshot, pr: AnalyzeSnapshot, opts: RunRulesOptions = {}): Finding[] {
   const { rules = BUILTIN_RULES, ...rest } = opts;
   const options: RuleOptions = { ...DEFAULT_RULE_OPTIONS, ...rest };
+  // Nothing below the noise floor is ever flagged, whatever a rule's own threshold says.
+  options.largeBytes = Math.max(options.largeBytes, options.minBytes);
   const merged = new Map<string, Finding>();
 
   for (const route of diff.routes) {

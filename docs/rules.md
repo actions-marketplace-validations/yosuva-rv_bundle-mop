@@ -15,6 +15,8 @@ No AI and no network: same input, same output.
 | `optimize-package-imports` | info | ≥ `moduleThreshold` modules of one package ship, and Next doesn't already optimize it | Subpath imports or `experimental.optimizePackageImports` |
 
 Options (defaults): `minBytes` 1,000 (noise floor), `largeBytes` 30,000, `moduleThreshold` 10, `includeInternalRoutes` false.
+`largeBytes` is raised to `minBytes` when lower: nothing under the noise floor is ever flagged. The CLI's `--min-bytes`
+sets the floor for both the rules and the markdown report, so they never disagree.
 Custom rules: pass `rules: Rule[]` (`{ id, description, check(ctx) → RouteFinding[] }`).
 
 ## Guardrails

@@ -67,6 +67,27 @@ describe('bundle-mop diff', () => {
     expect(run(['diff', BASE, truncated])).toMatchObject({ code: 1, output: expect.stringMatching(/t\.jsonl: line 2: invalid JSON/) });
   });
 
+  it('prints the PR comment with --format markdown', () => {
+    const { code, output } = run(['diff', BASE, PR, '--format', 'markdown']);
+    expect(code).toBe(0);
+    expect(output.startsWith('<!-- bundle-mop:comment -->\n## Bundle Mop')).toBe(true);
+    expect(output).toContain('### Suggestions');
+  });
+
+  it('applies --min-bytes to the report and the rules', () => {
+    const loud = run(['diff', BASE, PR, '--format', 'markdown', '--min-bytes', '10']).output;
+    expect(loud).toContain('| `components/DashboardClient.tsx` | -29 B |');
+    const quiet = run(['diff', BASE, PR, '--format', 'markdown', '--min-bytes', '100000']).output;
+    expect(quiet).toContain("✅ No route's JS changed by 100.0 kB or more.");
+    expect(quiet).not.toContain('### Suggestions');
+  });
+
+  it('validates --format', () => {
+    expect(run(['diff', BASE, PR, '--format', 'html'])).toMatchObject({ code: 1, output: expect.stringContaining('--format must be one of text, markdown, json') });
+    expect(run(['diff', BASE, PR, '--json', '--format', 'markdown'])).toMatchObject({ code: 1, output: expect.stringContaining('--json conflicts with --format') });
+    expect(JSON.parse(run(['diff', BASE, PR, '--format', 'json']).output).findings).toHaveLength(3);
+  });
+
   it('shows usage with --help', () => {
     expect(run(['diff', '--help'])).toMatchObject({ code: 0, output: expect.stringContaining('Usage: bundle-mop diff') });
   });
