@@ -1,5 +1,5 @@
 name: Bundle Mop
-description: Explains every PR's Next.js bundle change (which import, through which chain) and how to fix it.
+description: "Explains every PR's Next.js bundle change (which import, through which chain) and how to fix it."
 author: yosuva-rv
 branding:
   icon: package
@@ -7,38 +7,38 @@ branding:
 
 inputs:
   working-directory:
-    description: Directory of the Next.js app (relative to the repository root).
+    description: "Directory of the Next.js app, relative to the repository root."
     default: '.'
   base-ref:
-    description: Commit or ref to compare against. Defaults to the pull request's base commit.
+    description: "Commit or ref to compare against. Defaults to the pull request's base commit."
     default: ''
   install-command:
-    description: Command that installs dependencies in the base checkout. Defaults to one detected from the lockfile (pnpm, npm, yarn, bun).
+    description: "Command that installs dependencies in the base checkout. Defaults to one detected from the lockfile (pnpm, npm, yarn, bun)."
     default: ''
   min-bytes:
-    description: Noise floor in bytes. Smaller changes are hidden and never flagged.
+    description: "Noise floor in bytes. Smaller changes are hidden and never flagged."
     default: '1000'
   comment:
-    description: Post (or update) a pull request comment with the report.
+    description: "Post (or update) a pull request comment with the report."
     default: 'true'
   fail-on:
-    description: Fail the step when a finding of this severity or worse exists. One of none, info, warning, error.
+    description: "Fail the step when a finding of this severity or worse exists. One of none, info, warning, error."
     default: 'none'
   github-token:
-    description: Token used to comment. Needs `pull-requests: write`.
+    description: "Token used to comment. Needs the pull-requests write permission."
     default: ${{ github.token }}
 
 outputs:
   report-path:
-    description: Path to the markdown report.
+    description: "Path to the markdown report."
   json-path:
-    description: Path to the full diff + findings as JSON.
+    description: "Path to the full diff and findings as JSON."
   routes-changed:
-    description: Number of routes whose JS changed by at least min-bytes (or were added/removed).
+    description: "Number of routes whose JS changed by at least min-bytes, or that were added or removed."
   largest-first-load-delta:
-    description: Largest first-load JS growth on any route, in bytes (0 if none grew).
+    description: "Largest first-load JS growth on any route, in bytes (0 if none grew)."
   findings:
-    description: Number of findings (suggestions).
+    description: "Number of findings (suggestions)."
 
 runs:
   using: node24
