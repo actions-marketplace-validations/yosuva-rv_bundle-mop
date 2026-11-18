@@ -1,0 +1,13 @@
+{
+  "name": "base",
+  "createdAt": "2026-11-18T17:52:54.741Z",
+  "nextVersion": "16.4.6",
+  "gitBranch": "main",
+  "gitSha": "16add09f98c4a734208358403dfe96b4df9f285c",
+  "gitShortSha": "16add09",
+  "gitDirty": true,
+  "gitMessage": "docs: answer analyzer format open questions",
+  "appDirOnly": false,
+  "noMangling": false,
+  "routeCount": 4
+}

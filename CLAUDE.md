@@ -31,3 +31,5 @@ WHY (import chains), and suggests fixes with a deterministic rules engine.
 - Rules engine stays deterministic. AI explanations are optional and opt-in (`--ai`, the user's own key).
 - After 3 failed attempts at the same fix, stop and explain what you tried. Don't loop.
 - Windows and Linux both matter: use `node:path`, no shell-specific scripts.
+- Git Bash rewrites args like `/lazy` into Windows paths. Pass routes from PowerShell, or set `MSYS_NO_PATHCONV=1`.
+- Each fixture has an `EXPECTED.md` listing the facts tests should assert. Keep it in sync with its snapshot.

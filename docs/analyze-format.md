@@ -58,7 +58,7 @@ The order is the `meta` record, then all `module` records, then for each route: 
   available. `async` holds dynamic imports (verified: `LazyClient.tsx` → async → `Heavy.tsx (… next/dynamic entry)`).
   `traced` was empty everywhere.
 - ⚠️ **An edge does not mean bytes shipped.** A barrel's `<locals>` node has sync edges to every
-  re-export, including ones that were tree-shaken. In the scratch test, an unused `Unused.tsx`
+  re-export, including ones that were tree-shaken. In `fixtures/dynamic-barrel`, an unused `Unused.tsx`
   re-export still had an edge but only contributed an **11-byte** part. Always weight chains by
   `part` sizes, never by edges alone.
 - Paths are relative to **`[project]`**, the root Turbopack picked:
@@ -141,10 +141,13 @@ Each group lists the `outputs` that a `trigger_module_ident` causes to load.
 - `render_dependent` is triggered by a layout, page or client component the route renders.
 - `async` is triggered by a `next/dynamic entry`. Its outputs are **lazy**.
 
-**First-load JS for a route = `[client-fs]` parts in outputs reachable from `bootstrap` +
-`render_dependent` groups, excluding outputs that appear only in `async` groups.**
-Verified in the scratch app: `/lazy` `route-summaries` client total is 635,362 B and includes
-the 61,474 B moment chunk that only loads after the `next/dynamic` import resolves.
+**First-load JS for a route = all `[client-fs]` parts, minus parts in outputs that appear
+only in `async` groups.** Don't compute it as "outputs reachable from non-async groups":
+some outputs belong to **no group at all** (for example framework chunk `0cz1d0mv5g_q7.js`, 112,594 B,
+loaded by the route's `client_bootstrap` entry). That approach would drop them.
+
+Verified in `fixtures/dynamic-barrel` (see its `EXPECTED.md`): `/lazy` total 635,263 B includes
+a 61,657 B lazy-only chunk (moment + `Heavy.tsx`), so first-load is 573,606 B.
 
 ## What this means for Bundle Mop
 
@@ -174,8 +177,8 @@ the 61,474 B moment chunk that only loads after the `next/dynamic` import resolv
    paths with no hash. yarn is **not tested** (not installed here), so check Yarn PnP before claiming support.
 5. **Does `--route` filter `module` records?** No. The reader always writes every `module` record
    and filters only `route`/`output`/`part`/`group`. CI payload size is dominated by modules anyway.
-6. **`next/dynamic` and barrels?** See `module` / `group` above. Tested in a scratch npm copy of
-   the fixture (not committed). A committed `fixtures/dynamic-barrel` is still to do.
+6. **`next/dynamic` and barrels?** See `module` / `group` above. Committed as
+   `fixtures/dynamic-barrel` with its facts in `fixtures/dynamic-barrel/EXPECTED.md`.
 
 ## Still open
 

@@ -1,0 +1,21 @@
+{
+  "name": "@fixtures/dynamic-barrel",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "analyze": "next analyze --output"
+  },
+  "dependencies": {
+    "moment": "2.31.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "19.3.0",
+    "typescript": "6.0.3"
+  }
+}

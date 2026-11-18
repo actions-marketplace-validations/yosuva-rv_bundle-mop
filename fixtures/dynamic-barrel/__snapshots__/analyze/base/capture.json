@@ -1,0 +1,24 @@
+{
+  "fixture": "dynamic-barrel",
+  "snapshot": "base",
+  "nextVersion": "16.4.6",
+  "node": "v22.17.0",
+  "platform": "win32",
+  "capturedAt": "2026-11-18T17:52:55.486Z",
+  "commands": [
+    "next analyze --output --snapshot base",
+    "next analyze export --snapshot base"
+  ],
+  "recordCounts": {
+    "meta": 1,
+    "module": 929,
+    "route": 4,
+    "output": 546,
+    "part": 2301,
+    "group": 48
+  },
+  "sample": {
+    "focusRoute": "/lazy",
+    "records": 260
+  }
+}

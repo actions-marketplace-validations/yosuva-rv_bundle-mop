@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Regenerates the committed analyzer snapshot for a fixture app.
 //
-//   node scripts/snapshot-fixture.mjs <fixture> [snapshotName]
-//   e.g. node scripts/snapshot-fixture.mjs basic base
+//   node scripts/snapshot-fixture.mjs <fixture> [snapshotName] [focusRoute]
+//   e.g. node scripts/snapshot-fixture.mjs basic base /dashboard
+//
+// focusRoute picks which route's outputs/parts go into sample.jsonl
+// (default: the first route that isn't `/` or a `/_` internal route).
 //
 // Writes fixtures/<fixture>/__snapshots__/analyze/<snapshotName>/:
 //   export.jsonl.gz       full `next analyze export` output (gzipped)
@@ -16,9 +19,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-const [fixture, name = 'base'] = process.argv.slice(2);
+const [fixture, name = 'base', focusArg] = process.argv.slice(2);
 if (!fixture) {
-  console.error('usage: node scripts/snapshot-fixture.mjs <fixture> [snapshotName]');
+  console.error('usage: node scripts/snapshot-fixture.mjs <fixture> [snapshotName] [focusRoute]');
   process.exit(1);
 }
 
@@ -58,7 +61,11 @@ const isAppCode = (p) => p.startsWith(appPrefix) && !p.includes('node_modules');
 const isPackageEntry = (p) =>
   /node_modules\/(?!\.pnpm)(?!next\/|react\/|react-dom\/|@next\/|@swc\/|styled-jsx\/)[^/]+\/[^/]+\.js$/.test(p);
 const routes = records.filter((r) => r.type === 'route').map((r) => r.route);
-const focusRoute = routes.includes('/dashboard') ? '/dashboard' : routes[0];
+if (focusArg && !routes.includes(focusArg)) {
+  console.error(`focus route ${focusArg} not found; routes: ${routes.join(', ')}`);
+  process.exit(1);
+}
+const focusRoute = focusArg ?? routes.find((r) => r !== '/' && !r.startsWith('/_')) ?? routes[0];
 
 const sample = records.filter((r) => {
   switch (r.type) {

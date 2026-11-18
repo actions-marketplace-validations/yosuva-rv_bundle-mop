@@ -42,8 +42,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Catches Next.js releases that break the fixtures or the analyzer commands.
       - run: pnpm fixtures:build
-      - name: next analyze --output + export
-        working-directory: fixtures/basic
+      - name: next analyze --output + export (every fixture)
         run: |
-          pnpm exec next analyze --output --snapshot ci
-          pnpm exec next analyze export --snapshot ci | head -c 300
+          set -euo pipefail
+          for dir in fixtures/*/; do
+            echo "::group::$dir"
+            (cd "$dir" && pnpm exec next analyze --output --snapshot ci \
+              && pnpm exec next analyze export --snapshot ci > /tmp/export.jsonl \
+              && head -c 300 /tmp/export.jsonl && echo)
+            echo "::endgroup::"
+          done
