@@ -23,7 +23,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: yosuva-rv/bundle-mop@main # pin a release tag once one exists
+      - uses: yosuva-rv/bundle-mop@v0 # or pin @v0.1.0
         with:
           working-directory: apps/web # omit if the app is at the repository root
 ```

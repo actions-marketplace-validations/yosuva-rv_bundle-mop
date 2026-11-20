@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22 }
       - run: npm ci
-      - uses: yosuva-rv/bundle-mop@main
+      - uses: yosuva-rv/bundle-mop@v0
 ```
 
 Inputs, outputs, forks and security: [docs/action.md](docs/action.md).
