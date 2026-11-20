@@ -3,7 +3,7 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-20)
 
 First release.
 
