@@ -1338,20 +1338,20 @@ function renderMarkdown(diff, options = {}) {
 }
 
 // ../cli/src/index.ts
-var VERSION = "0.0.0";
+var VERSION = "0.1.0";
 var HELP = `bundle-mop v${VERSION}
 
 Explains every PR's Next.js bundle change: which import, through which chain,
 and how to fix it.
 
 Usage:
-  bundle-mop diff <base-export> <pr-export> [--format text|markdown|json] [--top <n>] [--min-bytes <n>]
-                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz)
+  bundle-mop diff <base-export> <pr-export> [options]
+                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz),
+                          check budgets and suggest fixes. \`bundle-mop diff --help\` for options.
   bundle-mop --help       Show this help
   bundle-mop --version    Show version
 
-Commands (coming soon):
-  compare --base <ref>    Capture base and PR snapshots and diff them
+Docs: https://github.com/yosuva-rv/bundle-mop
 `;
 
 // src/exec.ts

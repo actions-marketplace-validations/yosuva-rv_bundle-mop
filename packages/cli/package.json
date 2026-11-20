@@ -1,8 +1,29 @@
 {
   "name": "bundle-mop",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.",
+  "keywords": [
+    "nextjs",
+    "next",
+    "turbopack",
+    "bundle-size",
+    "bundle-analyzer",
+    "performance",
+    "pull-request",
+    "github-action",
+    "cli"
+  ],
   "license": "MIT",
+  "author": "yosuva-rv (https://github.com/yosuva-rv)",
+  "homepage": "https://github.com/yosuva-rv/bundle-mop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yosuva-rv/bundle-mop.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/yosuva-rv/bundle-mop/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,22 +31,29 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "bundle-mop": "./dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

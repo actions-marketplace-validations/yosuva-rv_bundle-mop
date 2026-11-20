@@ -16,9 +16,9 @@ jobs:
   bundle-mop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # only if you use pnpm
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6 # only if you use pnpm
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm

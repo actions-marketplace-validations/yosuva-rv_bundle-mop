@@ -15,4 +15,12 @@ describe('cli smoke', () => {
   it('fails on unknown command', () => {
     expect(run(['nope']).code).toBe(1);
   });
+
+  it('VERSION matches package.json and the CHANGELOG has an entry for it', async () => {
+    const fs = await import('node:fs');
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    expect(VERSION).toBe(pkg.version);
+    const changelog = fs.readFileSync(new URL('../../../CHANGELOG.md', import.meta.url), 'utf8');
+    expect(changelog).toContain(`## ${VERSION}`);
+  });
 });

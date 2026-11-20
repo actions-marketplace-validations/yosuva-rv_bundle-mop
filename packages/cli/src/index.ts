@@ -13,7 +13,7 @@ export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
 export { COMMENT_MARKER, formatChainMarkdown, renderMarkdown } from './report/markdown.js';
 export type { MarkdownOptions } from './report/markdown.js';
 
-export const VERSION = '0.0.0';
+export const VERSION = '0.1.0';
 
 export const HELP = `bundle-mop v${VERSION}
 
@@ -21,13 +21,13 @@ Explains every PR's Next.js bundle change: which import, through which chain,
 and how to fix it.
 
 Usage:
-  bundle-mop diff <base-export> <pr-export> [--format text|markdown|json] [--top <n>] [--min-bytes <n>]
-                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz)
+  bundle-mop diff <base-export> <pr-export> [options]
+                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz),
+                          check budgets and suggest fixes. \`bundle-mop diff --help\` for options.
   bundle-mop --help       Show this help
   bundle-mop --version    Show version
 
-Commands (coming soon):
-  compare --base <ref>    Capture base and PR snapshots and diff them
+Docs: https://github.com/yosuva-rv/bundle-mop
 `;
 
 export function run(argv: string[]): { code: number; output: string } {
