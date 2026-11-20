@@ -1,26 +1,48 @@
 # Releasing
 
-The CLI (npm `bundle-mop`) and the Action (`yosuva-rv/bundle-mop@vX`) share one version.
+The CLI (npm `bundle-mop`) and the Action (`yosuva-rv/bundle-mop@vX`) share one version. Releases are automated:
+you run one script and push; the **Release** workflow does the rest.
 
-## Checklist
+## Every release
 
-1. **Prepare** (a normal PR or commit on `main`):
-   - Bump `packages/cli/package.json` `version` and `VERSION` in `packages/cli/src/index.ts` (a test checks they match
-     and that `CHANGELOG.md` has a `## <version>` entry).
-   - Move the changelog entry from "(unreleased)" to the release date.
-   - Rebuild the action bundle (`pnpm -F bundle-mop-action build`) and commit it.
-   - CI green.
-2. **Check the npm tarball**: `cd packages/cli && npm pack --dry-run`. Expect `dist/`, `README.md`, `LICENSE`,
-   `package.json` only.
-3. **Publish to npm** (the maintainer, logged in with `npm login`; 2FA prompts for a one-time code):
-   `cd packages/cli && npm publish`. `prepublishOnly` runs typecheck, tests and build first.
-   After the first publish, consider npm **trusted publishing** (OIDC from GitHub Actions, no long-lived token).
-   Note that `actions/setup-node` v7 no longer exports a dummy `NODE_AUTH_TOKEN`.
-4. **Tag** the release commit and move the major tag:
-   `git tag -a v0.1.0 -m "v0.1.0" && git tag -f v0 && git push origin v0.1.0 && git push -f origin v0`.
-5. **GitHub release** from `v0.1.0` with the changelog entry. Tick "Publish this Action to the GitHub Marketplace"
-   (first time: accept the Marketplace agreement; the `name` in `action.yml` must be unique on the Marketplace).
-6. **Docs**: switch examples from `@main` to `@v0`.
+1. As you work, add changes under a `## Unreleased` heading at the top of `CHANGELOG.md`.
+2. Cut the release from a clean `main`:
+   ```sh
+   node scripts/release.mjs 0.1.2 --dry-run   # preview
+   node scripts/release.mjs 0.1.2             # bump, typecheck, test, build, commit, tag v0.1.2 (local)
+   git push origin main --follow-tags         # starts .github/workflows/release.yml
+   ```
+3. The **Release** workflow ([`release.yml`](../.github/workflows/release.yml)) then:
+   - checks the tag matches `packages/cli/package.json`, the changelog has the entry, and the commit is on `main`
+   - runs typecheck, tests and build, and checks the committed action bundle is current
+   - publishes `bundle-mop` to npm with **provenance** using **trusted publishing** (OIDC: no npm token or 2FA code)
+   - moves the major tag (`v0`) so `uses: yosuva-rv/bundle-mop@v0` picks up the release
+   - creates the GitHub release with the changelog entry as notes
+   - is safe to re-run: it skips the npm publish and the release if they already exist
+4. **Optional:** to update the GitHub Marketplace listing, edit the new release on GitHub, tick
+   "Publish this Action to the GitHub Marketplace" and save. GitHub's release API can't set this, so it stays a
+   manual click. Users on `@v0` get the new version either way.
 
-Steps 3–5 are public and can't be fully undone. npm only allows unpublishing within 72 hours, and a version number
-can never be reused.
+## One-time setup (done once per package)
+
+npmjs.com → **bundle-mop** → **Settings** → **Trusted publishing** → **GitHub Actions**:
+
+| Field | Value |
+|---|---|
+| Organization or user | `yosuva-rv` |
+| Repository | `bundle-mop` |
+| Workflow filename | `release.yml` |
+| Environment name | *(leave empty)* |
+| Allowed actions | tick **npm publish** (configurations created after 2026-09-03 only allow `npm stage publish` by default) |
+
+A new trusted publisher must complete its **first publish within 2 days**, or it has to be set up again.
+Requirements (handled by the workflow): GitHub-hosted runner, Node ≥ 22.14 and npm ≥ 11.5.1 (the workflow uses
+Node 24 and checks the npm version), and `permissions: id-token: write`.
+
+## Manual fallback
+
+If the workflow can't publish: `cd packages/cli && npm publish` (needs `npm login` and your 2FA code), then
+re-run the workflow. It skips the npm step and does the tags and release.
+
+npm only allows unpublishing within 72 hours, and a version number can never be reused. Fix mistakes with a new
+patch version.

@@ -18,6 +18,8 @@ WHY (import chains), and suggests fixes with a deterministic rules engine.
 - `node packages/cli/dist/bin.js diff fixtures/basic-before/__snapshots__/analyze/base/export.jsonl.gz fixtures/basic/__snapshots__/analyze/base/export.jsonl.gz`: diff the reference pair
 - `node scripts/snapshot-fixture.mjs <fixture> [name] [focusRoute]`: regenerate `fixtures/<fixture>/__snapshots__/analyze/<name>/`
 
+- `node scripts/release.mjs <x.y.z>` then `git push origin main --follow-tags`: release (see `docs/releasing.md`). Put user-facing changes under `## Unreleased` in CHANGELOG.md as you go.
+
 ## Rules
 - Before calling anything done, run `pnpm typecheck && pnpm test && pnpm build` and show the output.
 - All analyzer-format parsing lives in `packages/cli/src/adapter/`. Nothing else reads raw JSONL; everything else uses its normalised types (`AnalyzeSnapshot`, `SourceRef.key`).

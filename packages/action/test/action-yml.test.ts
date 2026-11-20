@@ -16,6 +16,27 @@ interface Manifest {
 const manifest = parse(fs.readFileSync(path.join(root, 'action.yml'), 'utf8')) as Manifest;
 const source = (f: string) => fs.readFileSync(path.join(root, 'packages/action/src', f), 'utf8');
 
+describe('workflows', () => {
+  const dir = path.join(root, '.github/workflows');
+  it.each(fs.readdirSync(dir).filter((f) => f.endsWith('.yml')))('%s is valid YAML with jobs', (file) => {
+    const wf = parse(fs.readFileSync(path.join(dir, file), 'utf8')) as { on: unknown; jobs: Record<string, unknown> };
+    expect(wf.on).toBeTruthy();
+    expect(Object.keys(wf.jobs).length).toBeGreaterThan(0);
+  });
+
+  it('release.yml can publish with trusted publishing and only runs on version tags', () => {
+    const wf = parse(fs.readFileSync(path.join(dir, 'release.yml'), 'utf8')) as {
+      on: { push: { tags: string[] } };
+      jobs: { release: { permissions: Record<string, string>; steps: { with?: Record<string, unknown>; run?: string }[] } };
+    };
+    expect(wf.on.push.tags).toEqual(['v[0-9]+.[0-9]+.[0-9]+']);
+    expect(wf.jobs.release.permissions).toMatchObject({ 'id-token': 'write', contents: 'write' });
+    const setupNode = wf.jobs.release.steps.find((s) => s.with?.['registry-url']);
+    expect(setupNode?.with).toMatchObject({ 'node-version': 24, 'package-manager-cache': false });
+    expect(wf.jobs.release.steps.some((s) => s.run?.includes('npm publish --provenance'))).toBe(true);
+  });
+});
+
 describe('action.yml', () => {
   it('parses and points at the committed bundle', () => {
     expect(manifest.runs.using).toBe('node24');
