@@ -1,0 +1,4 @@
+{
+  "$schema": "../schema/bundle-mop.config.schema.json",
+  "budgets": [{ "route": "/**", "firstLoad": "1 MB" }]
+}

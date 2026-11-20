@@ -1,4 +1,6 @@
 import { formatChain } from '../model/chains.js';
+import { METRIC_LABEL } from '../budgets/check.js';
+import type { BudgetResult } from '../budgets/check.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
 import type { Finding } from '../rules/types.js';
 import { formatBytes, formatDelta } from '../util/format.js';
@@ -62,8 +64,32 @@ function routeBlock(r: RouteDiff, top: number): string[] {
 export interface TextOptions {
   /** Max modules listed per route (default 10). */
   top?: number;
-  /** Rule findings to list under "Suggestions". */
+  /** Rule and budget findings. Budget findings (ruleId `budget`) are listed under "Budgets". */
   findings?: Finding[];
+  /** Budget results from checkBudgets(). */
+  budgets?: BudgetResult[];
+}
+
+const BUDGET_MARK: Record<BudgetResult['status'], string> = { over: 'x', 'still-over': '!', fixed: '✓', ok: '✓' };
+
+function budgetLines(results: BudgetResult[], findings: Finding[]): string[] {
+  if (!results.length) return [];
+  const lines = ['', 'Budgets:'];
+  for (const b of results) {
+    const state =
+      b.status === 'over'
+        ? `over by ${formatBytes(b.pr - b.limit)}`
+        : b.status === 'still-over'
+          ? `over by ${formatBytes(b.pr - b.limit)}, already over on base`
+          : b.status === 'fixed'
+            ? `back under (was ${formatBytes(b.base)})`
+            : `${Math.round((b.pr / b.limit) * 100)}% used`;
+    lines.push(`  ${BUDGET_MARK[b.status]} ${b.route}  ${METRIC_LABEL[b.metric]} ${formatBytes(b.pr)} / ${formatBytes(b.limit)}  (${state})`);
+    const f = findings.find((x) => x.subject === `budget:${b.route}:${b.metric}`);
+    if (f?.message) lines.push(`      ${f.message}`);
+    if (f?.suggestion) lines.push(`      → ${f.suggestion}`);
+  }
+  return lines;
 }
 
 const SEVERITY_MARK: Record<Finding['severity'], string> = { error: 'x', warning: '!', info: 'i' };
@@ -89,9 +115,12 @@ export function renderTextDiff(diff: SnapshotDiff, options: TextOptions = {}): s
     if (r.status === 'unchanged') continue;
     out.push('', ...routeBlock(r, top));
   }
-  if (options.findings?.length) {
+  const all = options.findings ?? [];
+  out.push(...budgetLines(options.budgets ?? [], all.filter((f) => f.ruleId === 'budget')));
+  const findings = all.filter((f) => f.ruleId !== 'budget');
+  if (findings.length) {
     out.push('', 'Suggestions:');
-    for (const f of options.findings) out.push(...findingBlock(f));
+    for (const f of findings) out.push(...findingBlock(f));
   }
   if (diff.warnings.length) out.push('', 'Warnings:', ...diff.warnings.map((w) => `  ! ${w}`));
   return out.join('\n');

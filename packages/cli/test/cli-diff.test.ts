@@ -88,6 +88,44 @@ describe('bundle-mop diff', () => {
     expect(JSON.parse(run(['diff', BASE, PR, '--format', 'json']).output).findings).toHaveLength(3);
   });
 
+  it('applies a budgets file and exits 1 when a budget is exceeded', () => {
+    const cfg = writeTmp('budgets.json', JSON.stringify({ budgets: [{ route: '/dashboard', firstLoad: '600 kB' }] }));
+    const r = run(['diff', BASE, PR, '--config', cfg]);
+    expect(r.code).toBe(1);
+    expect(r.output).toContain('Budgets:\n  x /dashboard  first-load JS 630.5 kB / 600.0 kB  (over by 30.6 kB)');
+    expect(run(['diff', BASE, PR, '--config', cfg, '--fail-on', 'none']).code).toBe(0);
+    const json = JSON.parse(run(['diff', BASE, PR, '--config', cfg, '--format', 'json']).output);
+    expect(json.budgets[0]).toMatchObject({ route: '/dashboard', status: 'over' });
+    expect(json.findings[0]).toMatchObject({ ruleId: 'budget', severity: 'error' });
+  });
+
+  it('passes with a budget that holds, and without any budgets file', () => {
+    const cfg = writeTmp('roomy.json', JSON.stringify({ budgets: [{ route: '/**', firstLoad: '1 MB' }] }));
+    expect(run(['diff', BASE, PR, '--config', cfg]).code).toBe(0);
+    expect(run(['diff', BASE, PR]).code).toBe(0); // rules only produce warnings/info
+    expect(run(['diff', BASE, PR, '--fail-on', 'warning']).code).toBe(1);
+  });
+
+  it('finds bundle-mop.config.json in the working directory', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cwd-'));
+    fs.writeFileSync(path.join(dir, 'bundle-mop.config.json'), JSON.stringify({ budgets: [{ route: '/dashboard', firstLoad: '600 kB' }] }));
+    const cwd = process.cwd();
+    try {
+      process.chdir(dir);
+      const r = run(['diff', BASE, PR]);
+      expect(r.code).toBe(1);
+      expect(r.output).toContain('raise the "/dashboard" budget in bundle-mop.config.json');
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it('reports config errors clearly', () => {
+    const bad = writeTmp('bad.json', '{"budgets":[{"route":"/","firstLoad":"lots"}]}');
+    expect(run(['diff', BASE, PR, '--config', bad])).toMatchObject({ code: 1, output: expect.stringContaining('budgets[0].firstLoad: invalid size "lots"') });
+    expect(run(['diff', BASE, PR, '--fail-on', 'sometimes'])).toMatchObject({ code: 1, output: expect.stringContaining('--fail-on must be one of') });
+  });
+
   it('shows usage with --help', () => {
     expect(run(['diff', '--help'])).toMatchObject({ code: 0, output: expect.stringContaining('Usage: bundle-mop diff') });
   });

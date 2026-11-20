@@ -16,7 +16,7 @@ function readInputs(env = process.env) {
   const minRaw = getInput("min-bytes", env) || "1000";
   const minBytes = Number(minRaw);
   if (!Number.isInteger(minBytes) || minBytes < 0) throw new InputError(`Input "min-bytes" must be a non-negative integer, got "${minRaw}"`);
-  const failOn = (getInput("fail-on", env) || "none").toLowerCase();
+  const failOn = (getInput("fail-on", env) || "error").toLowerCase();
   if (!["none", "info", "warning", "error"].includes(failOn)) {
     throw new InputError(`Input "fail-on" must be one of none, info, warning, error; got "${failOn}"`);
   }
@@ -32,6 +32,8 @@ function readInputs(env = process.env) {
   if (installCommand) inputs.installCommand = installCommand;
   const token = getInput("github-token", env);
   if (token) inputs.githubToken = token;
+  const config = getInput("config", env);
+  if (config) inputs.config = config;
   return inputs;
 }
 var escapeData = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
@@ -42,10 +44,10 @@ var log = {
   group: (title) => console.log(`::group::${title}`),
   endGroup: () => console.log("::endgroup::")
 };
-function setOutput(name, value, env = process.env) {
+function setOutput(name, value2, env = process.env) {
   const file = env.GITHUB_OUTPUT;
   if (!file) return;
-  const v = String(value);
+  const v = String(value2);
   const delim = `bundle_mop_${Math.random().toString(36).slice(2)}`;
   fs.appendFileSync(file, v.includes("\n") ? `${name}<<${delim}
 ${v}
@@ -60,12 +62,12 @@ function appendSummary(markdown, env = process.env) {
 }
 
 // src/run.ts
-import fs6 from "fs";
+import fs7 from "fs";
 import os from "os";
-import path4 from "path";
+import path6 from "path";
 
 // ../cli/src/commands/diff.ts
-import fs2 from "fs";
+import fs3 from "fs";
 import { parseArgs } from "util";
 import zlib from "zlib";
 
@@ -90,15 +92,15 @@ function pnpmVersion(rel, name) {
   const version = seg.slice(encoded.length).split("_")[0];
   return version || void 0;
 }
-function normalizePath(path5, appRoot) {
-  if (path5.startsWith(EXTERNALS)) {
-    const subpath = path5.slice(EXTERNALS.length);
+function normalizePath(path7, appRoot) {
+  if (path7.startsWith(EXTERNALS)) {
+    const subpath = path7.slice(EXTERNALS.length);
     return { key: `external:${subpath}`, kind: "external", subpath };
   }
-  if (!path5.startsWith(PROJECT)) {
-    return { key: `unknown:${path5}`, kind: "unknown", subpath: path5 };
+  if (!path7.startsWith(PROJECT)) {
+    return { key: `unknown:${path7}`, kind: "unknown", subpath: path7 };
   }
-  const rel = path5.slice(PROJECT.length);
+  const rel = path7.slice(PROJECT.length);
   const slashed = `/${rel}`;
   const nm = slashed.lastIndexOf("/node_modules/");
   if (nm !== -1) {
@@ -338,6 +340,102 @@ function parseNextAnalyzeLines(lines, options = {}) {
   };
 }
 
+// ../cli/src/budgets/config.ts
+import fs2 from "fs";
+import path from "path";
+var CONFIG_FILE = "bundle-mop.config.json";
+var BUDGET_METRICS = ["firstLoad", "lazy", "client"];
+var ConfigError = class extends Error {
+  constructor(message, source) {
+    super(source ? `${source}: ${message}` : message);
+    this.name = "ConfigError";
+  }
+};
+var UNITS = { b: 1, kb: 1e3, kib: 1024, mb: 1e6, mib: 1048576 };
+function parseSize(value2) {
+  if (typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0) return Math.round(value2);
+  if (typeof value2 === "string") {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib)?\s*$/i.exec(value2);
+    if (m) return Math.round(Number(m[1]) * UNITS[(m[2] ?? "b").toLowerCase()]);
+  }
+  throw new Error(`invalid size ${JSON.stringify(value2)} (use e.g. "150 kB", "1.5 MB" or a number of bytes)`);
+}
+function parseConfig(text, source) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    throw new ConfigError(`invalid JSON: ${e.message}`, source);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ConfigError("must be a JSON object", source);
+  const obj2 = raw;
+  for (const k of Object.keys(obj2)) {
+    if (k !== "budgets" && k !== "$schema") throw new ConfigError(`unknown key "${k}" (expected "budgets")`, source);
+  }
+  const list = obj2.budgets ?? [];
+  if (!Array.isArray(list)) throw new ConfigError('"budgets" must be an array', source);
+  const budgets = list.map((entry, i) => {
+    const at = `budgets[${i}]`;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new ConfigError(`${at} must be an object`, source);
+    const e = entry;
+    for (const k of Object.keys(e)) {
+      if (k !== "route" && !BUDGET_METRICS.includes(k)) {
+        throw new ConfigError(`${at}: unknown key "${k}" (expected route, ${BUDGET_METRICS.join(", ")})`, source);
+      }
+    }
+    if (typeof e.route !== "string" || !(e.route === "**" || e.route.startsWith("/"))) {
+      throw new ConfigError(`${at}.route must be a route pattern starting with "/" (or "**")`, source);
+    }
+    const rule = { route: e.route };
+    for (const metric of BUDGET_METRICS) {
+      if (e[metric] === void 0) continue;
+      try {
+        rule[metric] = parseSize(e[metric]);
+      } catch (err) {
+        throw new ConfigError(`${at}.${metric}: ${err.message}`, source);
+      }
+    }
+    if (!BUDGET_METRICS.some((m) => rule[m] !== void 0)) {
+      throw new ConfigError(`${at} sets no limit (add ${BUDGET_METRICS.join(", ")})`, source);
+    }
+    return rule;
+  });
+  const config = { budgets };
+  if (source) config.source = source;
+  return config;
+}
+function loadConfig(file) {
+  let text;
+  try {
+    text = fs2.readFileSync(file, "utf8");
+  } catch (e) {
+    throw new ConfigError(`cannot read config: ${e.code ?? String(e)}`, file);
+  }
+  return parseConfig(text, file);
+}
+function findConfig(dirs) {
+  for (const d of dirs) {
+    const f = path.join(d, CONFIG_FILE);
+    if (fs2.existsSync(f)) return f;
+  }
+  return void 0;
+}
+var escapeRe = (s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+function routePattern(pattern) {
+  if (pattern === "**") return /^.*$/;
+  let re = "";
+  for (const seg of pattern.split("/").slice(1)) {
+    re += seg === "**" ? "(?:/.*)?" : `/${seg.split("*").map(escapeRe).join("[^/]*")}`;
+  }
+  return new RegExp(`^${re}$`);
+}
+function matchesRoute(pattern, route) {
+  return routePattern(pattern).test(route);
+}
+
+// ../cli/src/budgets/check.ts
+import path2 from "path";
+
 // ../cli/src/model/chains.ts
 var RouteGraph = class {
   constructor(snapshot, route) {
@@ -445,6 +543,71 @@ var RouteGraph = class {
 };
 var shortKey = (key) => key.replace(/^(app|pkg|workspace|internal|external|unknown):/, "");
 
+// ../cli/src/util/format.ts
+function formatBytes(n) {
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  return abs < 1e3 ? `${sign}${abs} B` : `${sign}${(abs / 1e3).toFixed(1)} kB`;
+}
+var formatDelta = (n) => n > 0 ? `+${formatBytes(n)}` : n === 0 ? "\xB10 B" : formatBytes(n);
+
+// ../cli/src/budgets/check.ts
+var METRIC_LABEL = { firstLoad: "first-load JS", lazy: "lazy JS", client: "total client JS" };
+var STATUS_ORDER = { over: 0, "still-over": 1, fixed: 2, ok: 3 };
+function value(r, metric) {
+  return r[metric].raw;
+}
+function culprit(r) {
+  return [...r.packages, ...r.modules.filter((m) => !m.packageName)].filter((c) => c.firstLoad.delta > 0).sort((a, b) => b.firstLoad.delta - a.firstLoad.delta)[0];
+}
+function checkBudgets(diff, config, options = {}) {
+  const minBytes = options.minBytes ?? 1e3;
+  const results = [];
+  const findings = [];
+  for (const r of diff.routes) {
+    if (r.status === "removed") continue;
+    const rule = config.budgets.find((b) => r.isInternal && b.route.includes("*") ? false : matchesRoute(b.route, r.route));
+    if (!rule) continue;
+    for (const metric of BUDGET_METRICS) {
+      const limit = rule[metric];
+      if (limit === void 0) continue;
+      const { base, pr } = value(r, metric);
+      const isNew = r.status === "added";
+      const overPr = pr > limit;
+      const overBase = !isNew && base > limit;
+      const status = overPr ? overBase && pr - base < minBytes ? "still-over" : "over" : overBase ? "fixed" : "ok";
+      const result = { route: r.route, pattern: rule.route, metric, limit, base, pr, isNew, status };
+      results.push(result);
+      if (status !== "over" && status !== "still-over") continue;
+      const label = METRIC_LABEL[metric];
+      const over = pr - limit;
+      const why = status === "still-over" ? `It was already ${formatBytes(base)} on the base branch; this PR didn't make it worse.` : isNew ? "This route is new in this PR." : overBase ? `It was already over budget (${formatBytes(base)}) and grew by ${formatDelta(pr - base)}.` : `It was ${formatBytes(base)} on the base branch (${formatDelta(pr - base)}).`;
+      const top = culprit(r);
+      const f = {
+        ruleId: "budget",
+        severity: status === "over" ? "error" : "warning",
+        title: `${r.route} ${label} is ${formatBytes(pr)}, ${formatBytes(over)} over its ${formatBytes(limit)} budget`,
+        message: `${why}${top && status === "over" ? ` Biggest increase: ${top.packageName ?? shortKey(top.key)} (${formatDelta(top.firstLoad.delta)}).` : ""}`,
+        suggestion: status === "over" ? `Bring ${r.route} back under ${formatBytes(limit)} (see the suggestions below), or raise the "${rule.route}" budget in ${config.source ? shortPath(config.source) : CONFIG_FILE} if the increase is intended.` : `Not caused by this PR. Reduce ${r.route} or raise the "${rule.route}" budget when convenient.`,
+        subject: `budget:${r.route}:${metric}`,
+        routes: [r.route],
+        bytes: over
+      };
+      if (top?.chain && status === "over") f.chain = top.chain;
+      findings.push(f);
+    }
+  }
+  results.sort(
+    (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.pr - b.limit - (a.pr - a.limit) || a.route.localeCompare(b.route)
+  );
+  findings.sort((a, b) => a.severity === b.severity ? b.bytes - a.bytes : a.severity === "error" ? -1 : 1);
+  return { results, findings };
+}
+var shortPath = (p) => {
+  const rel = path2.relative(process.cwd(), path2.resolve(p));
+  return (rel && !rel.startsWith("..") && !path2.isAbsolute(rel) ? rel : p).replace(/\\/g, "/");
+};
+
 // ../cli/src/model/sizes.ts
 var sumParts = (parts) => {
   const total = { raw: 0, compressed: 0 };
@@ -551,7 +714,7 @@ function diffRoute(route, base, pr) {
     packages
   };
 }
-var STATUS_ORDER = { changed: 0, added: 1, removed: 2, unchanged: 3 };
+var STATUS_ORDER2 = { changed: 0, added: 1, removed: 2, unchanged: 3 };
 function attachChains(r, base, pr) {
   const graphs = /* @__PURE__ */ new Map();
   const graphFor = (snap) => {
@@ -575,7 +738,7 @@ function diffSnapshots(base, pr, options = {}) {
     if (options.chains !== false && (d.modules.length || d.packages.length)) attachChains(d, base, pr);
     return d;
   }).sort(
-    (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || Math.abs(b.firstLoad.raw.delta) - Math.abs(a.firstLoad.raw.delta) || a.route.localeCompare(b.route)
+    (a, b) => STATUS_ORDER2[a.status] - STATUS_ORDER2[b.status] || Math.abs(b.firstLoad.raw.delta) - Math.abs(a.firstLoad.raw.delta) || a.route.localeCompare(b.route)
   );
   const summary = { changed: 0, added: 0, removed: 0, unchanged: 0 };
   for (const r of routes) summary[r.status]++;
@@ -588,207 +751,8 @@ function diffSnapshots(base, pr, options = {}) {
   };
 }
 
-// ../cli/src/util/format.ts
-function formatBytes(n) {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  return abs < 1e3 ? `${sign}${abs} B` : `${sign}${(abs / 1e3).toFixed(1)} kB`;
-}
-var formatDelta = (n) => n > 0 ? `+${formatBytes(n)}` : n === 0 ? "\xB10 B" : formatBytes(n);
-
-// ../cli/src/report/rows.ts
-var PACKAGE_GROUP_MIN = 3;
-function routeRows(route, groupMin = PACKAGE_GROUP_MIN) {
-  const byPackage = /* @__PURE__ */ new Map();
-  for (const m of route.modules) {
-    if (!m.packageName) continue;
-    const list = byPackage.get(m.packageName);
-    if (list) list.push(m);
-    else byPackage.set(m.packageName, [m]);
-  }
-  const grouped = /* @__PURE__ */ new Set();
-  const rows = [];
-  for (const p of route.packages) {
-    const mods = p.packageName ? byPackage.get(p.packageName) : void 0;
-    if (!mods || mods.length < groupMin) continue;
-    grouped.add(p.packageName);
-    rows.push({ ...p, isPackage: true, moduleCount: mods.length });
-  }
-  for (const m of route.modules) {
-    if (m.packageName && grouped.has(m.packageName)) continue;
-    rows.push({ ...m, isPackage: false, moduleCount: 1 });
-  }
-  return rows.sort(
-    (x, y) => Math.abs(y.firstLoad.delta) - Math.abs(x.firstLoad.delta) || Math.abs(y.lazy.delta) - Math.abs(x.lazy.delta) || x.key.localeCompare(y.key)
-  );
-}
-
-// ../cli/src/report/markdown.ts
-var COMMENT_MARKER = "<!-- bundle-mop:comment -->";
-var GITHUB_LIMIT = 65536;
-function code(s, inTable = false) {
-  let text = inTable ? s.replace(/\|/g, "\\|") : s;
-  text = text.replace(/\r?\n/g, " ");
-  if (!text.includes("`")) return `\`${text}\``;
-  return `\`\` ${text} \`\``;
-}
-var pct = (d) => {
-  if (d.base === 0) return "";
-  const p = d.delta / d.base * 100;
-  return ` (${p > 0 ? "+" : ""}${p.toFixed(Math.abs(p) < 1 ? 2 : 1)}%)`;
-};
-var significant = (r, min) => r.status === "added" || r.status === "removed" || Math.abs(r.firstLoad.raw.delta) >= min || Math.abs(r.lazy.raw.delta) >= min;
-var moduleSignificant = (m, min) => Math.abs(m.firstLoad.delta) >= min || Math.abs(m.lazy.delta) >= min || m.movedTo !== void 0;
-function formatChainMarkdown(chain) {
-  return chain.steps.map((s) => {
-    const tags = [];
-    if (s.viaDynamicImport) tags.push("dynamic import");
-    if (s.isClientBoundary) tags.push('"use client"');
-    if (s.isBarrel) tags.push("barrel");
-    return `${code(shortKey(s.key))}${tags.length ? ` (${tags.join(", ")})` : ""}`;
-  }).join(" \u2192 ");
-}
-function headline(diff, shown, findings, min) {
-  const nSug = findings.length;
-  const sug = nSug ? ` \xB7 ${nSug} suggestion${nSug === 1 ? "" : "s"}` : "";
-  if (!shown.length) return `\u2705 No route's JS changed by ${formatBytes(min)} or more.${sug}`;
-  const worst = shown.reduce((a, b) => Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a);
-  const fl = worst.firstLoad.raw;
-  const icon = fl.delta > 0 ? "\u{1F53A}" : fl.delta < 0 ? "\u{1F53B}" : "\u2022";
-  const counts = `${shown.length} route${shown.length === 1 ? "" : "s"} changed`;
-  const desc = worst.status === "added" ? `${code(worst.route)} added (${formatBytes(fl.pr)} first-load)` : worst.status === "removed" ? `${code(worst.route)} removed` : `${code(worst.route)} first-load ${formatDelta(fl.delta)}${pct(fl)}`;
-  return `${icon} **Largest change:** ${desc} \xB7 ${counts}${sug}`;
-}
-function routeTable(routes) {
-  const rows = routes.map((r) => {
-    const fl = r.firstLoad.raw;
-    const lazy = r.lazy.raw.delta ? formatDelta(r.lazy.raw.delta) : "";
-    if (r.status === "added") return `| ${code(r.route, true)} (new) | ${formatBytes(fl.pr)} | new | ${lazy} |`;
-    if (r.status === "removed") return `| ~~${code(r.route, true)}~~ | | removed (was ${formatBytes(fl.base)}) | |`;
-    const change = fl.delta ? `${fl.delta > 0 ? "**" : ""}${formatDelta(fl.delta)}${fl.delta > 0 ? "**" : ""}${pct(fl)}` : "\xB10 B";
-    return `| ${code(r.route, true)} | ${formatBytes(fl.pr)} | ${change} | ${lazy} |`;
-  });
-  return ["| Route | First-load JS | Change | Lazy change |", "|---|---:|---:|---:|", ...rows];
-}
-function noteFor(m) {
-  const notes = [];
-  if (m.status === "added" || m.status === "removed") notes.push(m.status);
-  if (m.isPackage) notes.push(`${m.moduleCount} modules`);
-  if (m.movedTo) notes.push(`moved to ${m.movedTo === "lazy" ? "lazy" : "first-load"}`);
-  if (m.versions) notes.push(`${m.versions.base.join(", ") || "?"} \u2192 ${m.versions.pr.join(", ") || "?"}`);
-  return notes.join("; ");
-}
-var rowLabel = (row) => row.isPackage ? row.packageName ?? shortKey(row.key) : shortKey(row.key);
-var countModules = (rows) => rows.reduce((a, r) => a + r.moduleCount, 0);
-function routeDetails(r, opts, open) {
-  const all = routeRows(r);
-  const rows = all.filter((m) => moduleSignificant(m, opts.minBytes));
-  const hiddenModules = countModules(all) - countModules(rows);
-  if (!rows.length) return [];
-  const shown = rows.slice(0, opts.top);
-  const changed = countModules(rows);
-  const lines = [
-    `<details${open ? " open" : ""}><summary><b>${r.route.replace(/[<>&]/g, "")}</b>: ${changed} changed module${changed === 1 ? "" : "s"}</summary>`,
-    "",
-    "| Module | First-load | Lazy | |",
-    "|---|---:|---:|---|",
-    ...shown.map(
-      (m) => `| ${code(rowLabel(m), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ""} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ""} | ${noteFor(m)} |`
-    )
-  ];
-  const more = [];
-  if (rows.length > shown.length) more.push(`${rows.length - shown.length} more`);
-  if (hiddenModules) more.push(`${hiddenModules} smaller change${hiddenModules === 1 ? "" : "s"} under ${formatBytes(opts.minBytes)}`);
-  if (more.length) lines.push("", `<sub>Not shown: ${more.join(", ")}.</sub>`);
-  const whys = shown.filter((m) => m.chain && m.chain.steps.length > 1 && (m.firstLoad.delta > 0 || m.lazy.delta > 0)).slice(0, opts.whyLimit);
-  for (const m of whys) lines.push("", `**Why ${code(rowLabel(m))} ships:** ${formatChainMarkdown(m.chain)}`);
-  lines.push("", "</details>");
-  return lines;
-}
-var SEVERITY_ICON = { error: "\u274C", warning: "\u26A0\uFE0F", info: "\u{1F4A1}" };
-var routeList = (routes) => routes.length > 5 ? `${routes.slice(0, 5).map((r) => code(r)).join(", ")} +${routes.length - 5} more` : routes.map((r) => code(r)).join(", ");
-function findingBody(f) {
-  const lines = [];
-  if (f.message) lines.push(f.message, "");
-  if (f.suggestion) lines.push(f.suggestion, "");
-  if (f.docs) lines.push(`[Docs](${f.docs})`, "");
-  return lines;
-}
-function findingGroup(group, withChain) {
-  const [head, ...rest] = group;
-  const lines = [`#### ${SEVERITY_ICON[head.severity]} ${head.title}`, `<sub>${head.ruleId} \xB7 ${routeList(head.routes)}</sub>`, "", ...findingBody(head)];
-  for (const f of rest) {
-    const routes = f.routes.join() === head.routes.join() ? "" : ` \xB7 ${routeList(f.routes)}`;
-    lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}** <sub>${f.ruleId}${routes}</sub>`, "", ...findingBody(f));
-  }
-  const chain = group.find((f) => f.chain && f.chain.steps.length > 1)?.chain;
-  if (withChain && chain) lines.push("<details><summary>Import chain</summary>", "", formatChainMarkdown(chain), "", "</details>", "");
-  return lines;
-}
-function groupBySubject(findings) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const f of findings) {
-    const g = groups.get(f.subject);
-    if (g) g.push(f);
-    else groups.set(f.subject, [f]);
-  }
-  return [...groups.values()];
-}
-var FOOTER = '<sub>Minified client JS from <code>next analyze</code>; gzip figures are estimates. Changes under the noise threshold are hidden. Generated by <a href="https://github.com/yosuva-rv/bundle-mop">Bundle Mop</a>.</sub>';
-function render(diff, options, detail) {
-  const opts = { minBytes: options.minBytes ?? 1e3, top: options.top ?? 10, whyLimit: options.whyLimit ?? 3 };
-  const findings = options.findings ?? [];
-  const shown = diff.routes.filter((r) => r.status !== "unchanged" && significant(r, opts.minBytes));
-  const quiet = diff.routes.filter((r) => r.status === "changed" && !significant(r, opts.minBytes)).length;
-  const out = [COMMENT_MARKER, "## Bundle Mop", "", headline(diff, shown, findings, opts.minBytes), ""];
-  if (shown.length) {
-    const tableRoutes = detail === "minimal" ? shown.slice(0, 50) : shown;
-    out.push(...routeTable(tableRoutes), "");
-    const notes = [];
-    if (shown.length > tableRoutes.length) notes.push(`${shown.length - tableRoutes.length} more changed routes not shown`);
-    if (quiet) notes.push(`${quiet} route${quiet === 1 ? "" : "s"} changed by less than ${formatBytes(opts.minBytes)}`);
-    if (diff.summary.unchanged) notes.push(`${diff.summary.unchanged} unchanged`);
-    if (notes.length) out.push(`<sub>${notes.join(" \xB7 ")}</sub>`, "");
-  }
-  if (detail === "full") {
-    let first = true;
-    for (const r of shown) {
-      const block = routeDetails(r, opts, first);
-      if (block.length) {
-        out.push(...block, "");
-        first = false;
-      }
-    }
-  }
-  if (findings.length && detail !== "minimal") {
-    out.push("### Suggestions", "");
-    for (const g of groupBySubject(findings)) out.push(...findingGroup(g, detail === "full"));
-  } else if (findings.length) {
-    out.push("### Suggestions", "", ...findings.slice(0, 20).map((f) => `- ${SEVERITY_ICON[f.severity]} ${f.title} <sub>(${f.ruleId})</sub>`), "");
-  }
-  if (diff.warnings.length) {
-    out.push("<details><summary>Analyzer warnings</summary>", "", ...diff.warnings.map((w) => `- ${w}`), "", "</details>", "");
-  }
-  if (detail !== "full") out.push("<sub>Report shortened to fit a GitHub comment. Run <code>bundle-mop diff</code> locally for the full report.</sub>", "");
-  out.push(FOOTER);
-  return out.join("\n") + "\n";
-}
-function renderMarkdown(diff, options = {}) {
-  const max = Math.min(options.maxLength ?? 6e4, GITHUB_LIMIT);
-  for (const detail of ["full", "compact", "minimal"]) {
-    const md2 = render(diff, options, detail);
-    if (md2.length <= max) return md2;
-  }
-  const md = render(diff, options, "minimal");
-  const cut = md.slice(0, max - 200);
-  return `${cut.slice(0, cut.lastIndexOf("\n"))}
-
-<sub>Report truncated.</sub>
-`;
-}
-
 // ../cli/src/rules/rules.ts
-import path from "path";
+import path3 from "path";
 
 // ../cli/src/rules/catalog.ts
 var HEAVY_PACKAGES = [
@@ -887,13 +851,13 @@ function packageVersions(route) {
   return out;
 }
 var componentName = (key) => {
-  const base = path.posix.basename(shortKey(key)).replace(/\.[jt]sx?$/, "");
-  const name = base === "index" ? path.posix.basename(path.posix.dirname(shortKey(key))) : base;
+  const base = path3.posix.basename(shortKey(key)).replace(/\.[jt]sx?$/, "");
+  const name = base === "index" ? path3.posix.basename(path3.posix.dirname(shortKey(key))) : base;
   const pascal = name.replace(/(^|[-_.\s]+)(\w)/g, (_, __, c) => c.toUpperCase());
   return /^[A-Za-z_$]/.test(pascal) ? pascal : `Lazy${pascal}`;
 };
 var importPath = (fromKey, toKey) => {
-  let rel = path.posix.relative(path.posix.dirname(shortKey(fromKey)), shortKey(toKey)).replace(/\.[jt]sx?$/, "");
+  let rel = path3.posix.relative(path3.posix.dirname(shortKey(fromKey)), shortKey(toKey)).replace(/\.[jt]sx?$/, "");
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
 };
@@ -1127,6 +1091,252 @@ function runRules(diff, base, pr, opts = {}) {
   );
 }
 
+// ../cli/src/pipeline.ts
+function analyze(base, pr, options = {}) {
+  const minBytes = options.minBytes ?? 1e3;
+  const diff = diffSnapshots(base, pr);
+  const budget = options.config ? checkBudgets(diff, options.config, { minBytes }) : { results: [], findings: [] };
+  return { diff, budgets: budget.results, findings: [...budget.findings, ...runRules(diff, base, pr, { minBytes })] };
+}
+
+// ../cli/src/report/rows.ts
+var PACKAGE_GROUP_MIN = 3;
+function routeRows(route, groupMin = PACKAGE_GROUP_MIN) {
+  const byPackage = /* @__PURE__ */ new Map();
+  for (const m of route.modules) {
+    if (!m.packageName) continue;
+    const list = byPackage.get(m.packageName);
+    if (list) list.push(m);
+    else byPackage.set(m.packageName, [m]);
+  }
+  const grouped = /* @__PURE__ */ new Set();
+  const rows = [];
+  for (const p of route.packages) {
+    const mods = p.packageName ? byPackage.get(p.packageName) : void 0;
+    if (!mods || mods.length < groupMin) continue;
+    grouped.add(p.packageName);
+    rows.push({ ...p, isPackage: true, moduleCount: mods.length });
+  }
+  for (const m of route.modules) {
+    if (m.packageName && grouped.has(m.packageName)) continue;
+    rows.push({ ...m, isPackage: false, moduleCount: 1 });
+  }
+  return rows.sort(
+    (x, y) => Math.abs(y.firstLoad.delta) - Math.abs(x.firstLoad.delta) || Math.abs(y.lazy.delta) - Math.abs(x.lazy.delta) || x.key.localeCompare(y.key)
+  );
+}
+
+// ../cli/src/report/markdown.ts
+var COMMENT_MARKER = "<!-- bundle-mop:comment -->";
+var GITHUB_LIMIT = 65536;
+function code(s, inTable = false) {
+  let text = inTable ? s.replace(/\|/g, "\\|") : s;
+  text = text.replace(/\r?\n/g, " ");
+  if (!text.includes("`")) return `\`${text}\``;
+  return `\`\` ${text} \`\``;
+}
+var pct = (d) => {
+  if (d.base === 0) return "";
+  const p = d.delta / d.base * 100;
+  return ` (${p > 0 ? "+" : ""}${p.toFixed(Math.abs(p) < 1 ? 2 : 1)}%)`;
+};
+var significant = (r, min) => r.status === "added" || r.status === "removed" || Math.abs(r.firstLoad.raw.delta) >= min || Math.abs(r.lazy.raw.delta) >= min;
+var moduleSignificant = (m, min) => Math.abs(m.firstLoad.delta) >= min || Math.abs(m.lazy.delta) >= min || m.movedTo !== void 0;
+function formatChainMarkdown(chain) {
+  return chain.steps.map((s) => {
+    const tags = [];
+    if (s.viaDynamicImport) tags.push("dynamic import");
+    if (s.isClientBoundary) tags.push('"use client"');
+    if (s.isBarrel) tags.push("barrel");
+    return `${code(shortKey(s.key))}${tags.length ? ` (${tags.join(", ")})` : ""}`;
+  }).join(" \u2192 ");
+}
+function headline(diff, shown, findings, min) {
+  const nSug = findings.length;
+  const sug = nSug ? ` \xB7 ${nSug} suggestion${nSug === 1 ? "" : "s"}` : "";
+  if (!shown.length) return `\u2705 No route's JS changed by ${formatBytes(min)} or more.${sug}`;
+  const worst = shown.reduce((a, b) => Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a);
+  const fl = worst.firstLoad.raw;
+  const icon = fl.delta > 0 ? "\u{1F53A}" : fl.delta < 0 ? "\u{1F53B}" : "\u2022";
+  const counts = `${shown.length} route${shown.length === 1 ? "" : "s"} changed`;
+  const desc = worst.status === "added" ? `${code(worst.route)} added (${formatBytes(fl.pr)} first-load)` : worst.status === "removed" ? `${code(worst.route)} removed` : `${code(worst.route)} first-load ${formatDelta(fl.delta)}${pct(fl)}`;
+  return `${icon} **Largest change:** ${desc} \xB7 ${counts}${sug}`;
+}
+function routeTable(routes) {
+  const rows = routes.map((r) => {
+    const fl = r.firstLoad.raw;
+    const lazy = r.lazy.raw.delta ? formatDelta(r.lazy.raw.delta) : "";
+    if (r.status === "added") return `| ${code(r.route, true)} (new) | ${formatBytes(fl.pr)} | new | ${lazy} |`;
+    if (r.status === "removed") return `| ~~${code(r.route, true)}~~ | | removed (was ${formatBytes(fl.base)}) | |`;
+    const change = fl.delta ? `${fl.delta > 0 ? "**" : ""}${formatDelta(fl.delta)}${fl.delta > 0 ? "**" : ""}${pct(fl)}` : "\xB10 B";
+    return `| ${code(r.route, true)} | ${formatBytes(fl.pr)} | ${change} | ${lazy} |`;
+  });
+  return ["| Route | First-load JS | Change | Lazy change |", "|---|---:|---:|---:|", ...rows];
+}
+function noteFor(m) {
+  const notes = [];
+  if (m.status === "added" || m.status === "removed") notes.push(m.status);
+  if (m.isPackage) notes.push(`${m.moduleCount} modules`);
+  if (m.movedTo) notes.push(`moved to ${m.movedTo === "lazy" ? "lazy" : "first-load"}`);
+  if (m.versions) notes.push(`${m.versions.base.join(", ") || "?"} \u2192 ${m.versions.pr.join(", ") || "?"}`);
+  return notes.join("; ");
+}
+var rowLabel = (row) => row.isPackage ? row.packageName ?? shortKey(row.key) : shortKey(row.key);
+var countModules = (rows) => rows.reduce((a, r) => a + r.moduleCount, 0);
+function routeDetails(r, opts, open) {
+  const all = routeRows(r);
+  const rows = all.filter((m) => moduleSignificant(m, opts.minBytes));
+  const hiddenModules = countModules(all) - countModules(rows);
+  if (!rows.length) return [];
+  const shown = rows.slice(0, opts.top);
+  const changed = countModules(rows);
+  const lines = [
+    `<details${open ? " open" : ""}><summary><b>${r.route.replace(/[<>&]/g, "")}</b>: ${changed} changed module${changed === 1 ? "" : "s"}</summary>`,
+    "",
+    "| Module | First-load | Lazy | |",
+    "|---|---:|---:|---|",
+    ...shown.map(
+      (m) => `| ${code(rowLabel(m), true)} | ${m.firstLoad.delta ? formatDelta(m.firstLoad.delta) : ""} | ${m.lazy.delta ? formatDelta(m.lazy.delta) : ""} | ${noteFor(m)} |`
+    )
+  ];
+  const more = [];
+  if (rows.length > shown.length) more.push(`${rows.length - shown.length} more`);
+  if (hiddenModules) more.push(`${hiddenModules} smaller change${hiddenModules === 1 ? "" : "s"} under ${formatBytes(opts.minBytes)}`);
+  if (more.length) lines.push("", `<sub>Not shown: ${more.join(", ")}.</sub>`);
+  const whys = shown.filter((m) => m.chain && m.chain.steps.length > 1 && (m.firstLoad.delta > 0 || m.lazy.delta > 0)).slice(0, opts.whyLimit);
+  for (const m of whys) lines.push("", `**Why ${code(rowLabel(m))} ships:** ${formatChainMarkdown(m.chain)}`);
+  lines.push("", "</details>");
+  return lines;
+}
+var SEVERITY_ICON = { error: "\u274C", warning: "\u26A0\uFE0F", info: "\u{1F4A1}" };
+var routeList = (routes) => routes.length > 5 ? `${routes.slice(0, 5).map((r) => code(r)).join(", ")} +${routes.length - 5} more` : routes.map((r) => code(r)).join(", ");
+function findingBody(f) {
+  const lines = [];
+  if (f.message) lines.push(f.message, "");
+  if (f.suggestion) lines.push(f.suggestion, "");
+  if (f.docs) lines.push(`[Docs](${f.docs})`, "");
+  return lines;
+}
+function findingGroup(group, withChain) {
+  const [head, ...rest] = group;
+  const lines = [`#### ${SEVERITY_ICON[head.severity]} ${head.title}`, `<sub>${head.ruleId} \xB7 ${routeList(head.routes)}</sub>`, "", ...findingBody(head)];
+  for (const f of rest) {
+    const routes = f.routes.join() === head.routes.join() ? "" : ` \xB7 ${routeList(f.routes)}`;
+    lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}** <sub>${f.ruleId}${routes}</sub>`, "", ...findingBody(f));
+  }
+  const chain = group.find((f) => f.chain && f.chain.steps.length > 1)?.chain;
+  if (withChain && chain) lines.push("<details><summary>Import chain</summary>", "", formatChainMarkdown(chain), "", "</details>", "");
+  return lines;
+}
+function groupBySubject(findings) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const f of findings) {
+    const g = groups.get(f.subject);
+    if (g) g.push(f);
+    else groups.set(f.subject, [f]);
+  }
+  return [...groups.values()];
+}
+var FOOTER = '<sub>Minified client JS from <code>next analyze</code>; gzip figures are estimates. Changes under the noise threshold are hidden. Generated by <a href="https://github.com/yosuva-rv/bundle-mop">Bundle Mop</a>.</sub>';
+var BUDGET_ROWS = { full: 25, compact: 25, minimal: 10 };
+function budgetStatus(b) {
+  const over = formatBytes(b.pr - b.limit);
+  switch (b.status) {
+    case "over":
+      return `\u274C over by ${over}${b.isNew ? " (new route)" : ""}`;
+    case "still-over":
+      return `\u26A0\uFE0F over by ${over} (already over on base)`;
+    case "fixed":
+      return `\u2705 back under (was ${formatBytes(b.base)})`;
+    default:
+      return `\u2705 ${Math.round(b.pr / b.limit * 100)}% used`;
+  }
+}
+function budgetLine(results) {
+  const over = results.filter((b) => b.status === "over").length;
+  const still = results.filter((b) => b.status === "still-over").length;
+  if (!over && !still) return void 0;
+  const parts = [];
+  if (over) parts.push(`\u274C **${over} budget${over === 1 ? "" : "s"} exceeded**`);
+  if (still) parts.push(`\u26A0\uFE0F ${still} already over budget on base`);
+  return parts.join(" \xB7 ");
+}
+function budgetSection(results, findings, detail) {
+  if (!results.length) return [];
+  const rows = results.slice(0, BUDGET_ROWS[detail]);
+  const lines = [
+    "### Budgets",
+    "",
+    "| Route | Metric | Size | Budget | |",
+    "|---|---|---:|---:|---|",
+    ...rows.map((b) => `| ${code(b.route, true)} | ${METRIC_LABEL[b.metric]} | ${formatBytes(b.pr)} | ${formatBytes(b.limit)} | ${budgetStatus(b)} |`)
+  ];
+  if (results.length > rows.length) lines.push("", `<sub>${results.length - rows.length} more budgeted routes within budget.</sub>`);
+  lines.push("");
+  if (detail !== "minimal") {
+    for (const f of findings) lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}**`, "", ...findingBody(f));
+  }
+  return lines;
+}
+function render(diff, options, detail) {
+  const opts = { minBytes: options.minBytes ?? 1e3, top: options.top ?? 10, whyLimit: options.whyLimit ?? 3 };
+  const all = options.findings ?? [];
+  const budgetFindings = all.filter((f) => f.ruleId === "budget");
+  const findings = all.filter((f) => f.ruleId !== "budget");
+  const budgets = options.budgets ?? [];
+  const shown = diff.routes.filter((r) => r.status !== "unchanged" && significant(r, opts.minBytes));
+  const quiet = diff.routes.filter((r) => r.status === "changed" && !significant(r, opts.minBytes)).length;
+  const out = [COMMENT_MARKER, "## Bundle Mop", ""];
+  const bl = budgetLine(budgets);
+  if (bl) out.push(bl, "");
+  out.push(headline(diff, shown, findings, opts.minBytes), "");
+  if (shown.length) {
+    const tableRoutes = detail === "minimal" ? shown.slice(0, 50) : shown;
+    out.push(...routeTable(tableRoutes), "");
+    const notes = [];
+    if (shown.length > tableRoutes.length) notes.push(`${shown.length - tableRoutes.length} more changed routes not shown`);
+    if (quiet) notes.push(`${quiet} route${quiet === 1 ? "" : "s"} changed by less than ${formatBytes(opts.minBytes)}`);
+    if (diff.summary.unchanged) notes.push(`${diff.summary.unchanged} unchanged`);
+    if (notes.length) out.push(`<sub>${notes.join(" \xB7 ")}</sub>`, "");
+  }
+  out.push(...budgetSection(budgets, budgetFindings, detail));
+  if (detail === "full") {
+    let first = true;
+    for (const r of shown) {
+      const block = routeDetails(r, opts, first);
+      if (block.length) {
+        out.push(...block, "");
+        first = false;
+      }
+    }
+  }
+  if (findings.length && detail !== "minimal") {
+    out.push("### Suggestions", "");
+    for (const g of groupBySubject(findings)) out.push(...findingGroup(g, detail === "full"));
+  } else if (findings.length) {
+    out.push("### Suggestions", "", ...findings.slice(0, 20).map((f) => `- ${SEVERITY_ICON[f.severity]} ${f.title} <sub>(${f.ruleId})</sub>`), "");
+  }
+  if (diff.warnings.length) {
+    out.push("<details><summary>Analyzer warnings</summary>", "", ...diff.warnings.map((w) => `- ${w}`), "", "</details>", "");
+  }
+  if (detail !== "full") out.push("<sub>Report shortened to fit a GitHub comment. Run <code>bundle-mop diff</code> locally for the full report.</sub>", "");
+  out.push(FOOTER);
+  return out.join("\n") + "\n";
+}
+function renderMarkdown(diff, options = {}) {
+  const max = Math.min(options.maxLength ?? 6e4, GITHUB_LIMIT);
+  for (const detail of ["full", "compact", "minimal"]) {
+    const md2 = render(diff, options, detail);
+    if (md2.length <= max) return md2;
+  }
+  const md = render(diff, options, "minimal");
+  const cut = md.slice(0, max - 200);
+  return `${cut.slice(0, cut.lastIndexOf("\n"))}
+
+<sub>Report truncated.</sub>
+`;
+}
+
 // ../cli/src/index.ts
 var VERSION = "0.0.0";
 var HELP = `bundle-mop v${VERSION}
@@ -1146,7 +1356,7 @@ Commands (coming soon):
 
 // src/exec.ts
 import { spawn } from "child_process";
-import fs3 from "fs";
+import fs4 from "fs";
 var ExecError = class extends Error {
   constructor(command, exitCode) {
     super(`\`${command}\` failed with exit code ${exitCode}`);
@@ -1160,7 +1370,7 @@ var ExecError = class extends Error {
 function exec(command, args, opts) {
   const display = [command, ...args].join(" ");
   return new Promise((resolve, reject) => {
-    const out = opts.stdoutFile ? fs3.openSync(opts.stdoutFile, "w") : void 0;
+    const out = opts.stdoutFile ? fs4.openSync(opts.stdoutFile, "w") : void 0;
     const child = spawn(command, args, {
       cwd: opts.cwd,
       shell: opts.shell ?? false,
@@ -1172,11 +1382,11 @@ function exec(command, args, opts) {
       captured += d.toString("utf8");
     });
     child.on("error", (e) => {
-      if (out !== void 0) fs3.closeSync(out);
+      if (out !== void 0) fs4.closeSync(out);
       reject(e);
     });
     child.on("close", (code2) => {
-      if (out !== void 0) fs3.closeSync(out);
+      if (out !== void 0) fs4.closeSync(out);
       if (code2 === 0) resolve(captured);
       else reject(new ExecError(display, code2));
     });
@@ -1203,7 +1413,7 @@ var GitHubClient = class {
   repo;
   apiUrl;
   fetchImpl;
-  async request(method, path5, body) {
+  async request(method, path7, body) {
     const init = {
       method,
       headers: {
@@ -1215,14 +1425,14 @@ var GitHubClient = class {
       }
     };
     if (body !== void 0) init.body = JSON.stringify(body);
-    const res = await this.fetchImpl(`${this.apiUrl}${path5}`, init);
+    const res = await this.fetchImpl(`${this.apiUrl}${path7}`, init);
     if (!res.ok) {
       let detail = "";
       try {
         detail = (await res.json()).message ?? "";
       } catch {
       }
-      throw new GitHubApiError(res.status, `GitHub API ${method} ${path5} failed: ${res.status}${detail ? ` ${detail}` : ""}`);
+      throw new GitHubApiError(res.status, `GitHub API ${method} ${path7} failed: ${res.status}${detail ? ` ${detail}` : ""}`);
     }
     return await res.json();
   }
@@ -1269,8 +1479,8 @@ function failureFor(findings, failOn) {
 }
 
 // src/package-manager.ts
-import fs4 from "fs";
-import path2 from "path";
+import fs5 from "fs";
+import path4 from "path";
 var LOCKFILES = [
   { file: "pnpm-lock.yaml", command: () => "pnpm install --frozen-lockfile" },
   { file: "bun.lock", command: () => "bun install --frozen-lockfile" },
@@ -1278,57 +1488,57 @@ var LOCKFILES = [
   {
     file: "yarn.lock",
     // Yarn Berry (has .yarnrc.yml) uses --immutable; Yarn classic uses --frozen-lockfile.
-    command: (dir) => fs4.existsSync(path2.join(dir, ".yarnrc.yml")) ? "yarn install --immutable" : "yarn install --frozen-lockfile"
+    command: (dir) => fs5.existsSync(path4.join(dir, ".yarnrc.yml")) ? "yarn install --immutable" : "yarn install --frozen-lockfile"
   },
   { file: "package-lock.json", command: () => "npm ci" }
 ];
 function detectInstall(start, stop) {
-  const root = path2.resolve(stop);
-  let dir = path2.resolve(start);
+  const root = path4.resolve(stop);
+  let dir = path4.resolve(start);
   for (; ; ) {
     for (const l of LOCKFILES) {
-      if (fs4.existsSync(path2.join(dir, l.file))) return { dir, command: l.command(dir), lockfile: l.file };
+      if (fs5.existsSync(path4.join(dir, l.file))) return { dir, command: l.command(dir), lockfile: l.file };
     }
-    const parent = path2.dirname(dir);
+    const parent = path4.dirname(dir);
     if (dir === root || parent === dir || !dir.startsWith(root)) return void 0;
     dir = parent;
   }
 }
 
 // src/snapshot.ts
-import fs5 from "fs";
+import fs6 from "fs";
 import { createRequire } from "module";
-import path3 from "path";
+import path5 from "path";
 var MIN_NEXT = [16, 4];
 var SnapshotError = class extends Error {
 };
 function resolveNext(appDir) {
   let pkgJson;
   try {
-    pkgJson = createRequire(path3.join(appDir, "package.json")).resolve("next/package.json");
+    pkgJson = createRequire(path5.join(appDir, "package.json")).resolve("next/package.json");
   } catch {
     throw new SnapshotError(`Can't find the "next" package from ${appDir}. Install dependencies before this step, and check working-directory.`);
   }
-  const { version } = JSON.parse(fs5.readFileSync(pkgJson, "utf8"));
+  const { version } = JSON.parse(fs6.readFileSync(pkgJson, "utf8"));
   const [major = 0, minor = 0] = version.split(".").map((n) => Number.parseInt(n, 10));
   if (major < MIN_NEXT[0] || major === MIN_NEXT[0] && minor < MIN_NEXT[1]) {
     throw new SnapshotError(`Next.js ${version} found in ${appDir}; Bundle Mop needs ${MIN_NEXT.join(".")} or newer (for \`next analyze export\`).`);
   }
-  return { bin: path3.join(path3.dirname(pkgJson), "dist", "bin", "next"), version };
+  return { bin: path5.join(path5.dirname(pkgJson), "dist", "bin", "next"), version };
 }
 async function captureSnapshot(appDir, name, outFile) {
   const { bin, version } = resolveNext(appDir);
   const env = { ...process.env, NEXT_TELEMETRY_DISABLED: "1" };
   await exec(process.execPath, [bin, "analyze", "--output", "--snapshot", name], { cwd: appDir, env });
   await exec(process.execPath, [bin, "analyze", "export", "--snapshot", name], { cwd: appDir, env, stdoutFile: outFile });
-  if (!fs5.statSync(outFile).size) throw new SnapshotError(`\`next analyze export\` wrote nothing for snapshot "${name}" in ${appDir}.`);
+  if (!fs6.statSync(outFile).size) throw new SnapshotError(`\`next analyze export\` wrote nothing for snapshot "${name}" in ${appDir}.`);
   return { nextVersion: version };
 }
 
 // src/run.ts
 function readEvent(file) {
-  if (!file || !fs6.existsSync(file)) return void 0;
-  return JSON.parse(fs6.readFileSync(file, "utf8"));
+  if (!file || !fs7.existsSync(file)) return void 0;
+  return JSON.parse(fs7.readFileSync(file, "utf8"));
 }
 var git = (args, cwd) => exec("git", args, { cwd, capture: true }).then((s) => s.trim());
 async function resolveCommit(gitRoot, ref) {
@@ -1341,18 +1551,18 @@ async function resolveCommit(gitRoot, ref) {
   }
 }
 async function captureBase(gitRoot, relApp, baseSha, tmp, installCommand, outFile) {
-  const worktree = path4.join(tmp, "base");
+  const worktree = path6.join(tmp, "base");
   await exec("git", ["worktree", "add", "--detach", worktree, baseSha], { cwd: gitRoot });
   try {
-    const baseApp = path4.join(worktree, relApp);
-    if (!fs6.existsSync(path4.join(baseApp, "package.json"))) {
+    const baseApp = path6.join(worktree, relApp);
+    if (!fs7.existsSync(path6.join(baseApp, "package.json"))) {
       throw new SnapshotError(`${relApp || "."} has no package.json in the base commit ${baseSha.slice(0, 7)}; nothing to compare against.`);
     }
     const detected = detectInstall(baseApp, worktree);
     const dir = detected?.dir ?? worktree;
     const command = installCommand ?? detected?.command;
     if (!command) throw new SnapshotError("No lockfile found for the base checkout. Set the install-command input.");
-    log.info(`Installing base dependencies: ${command} (in ${path4.relative(worktree, dir) || "."})`);
+    log.info(`Installing base dependencies: ${command} (in ${path6.relative(worktree, dir) || "."})`);
     await exec(command, [], { cwd: dir, shell: true });
     await captureSnapshot(baseApp, "base", outFile);
   } finally {
@@ -1363,25 +1573,25 @@ async function removeWorktree(gitRoot, worktree) {
   try {
     await exec("git", ["worktree", "remove", "--force", worktree], { cwd: gitRoot });
   } catch {
-    fs6.rmSync(worktree, { recursive: true, force: true, maxRetries: 3 });
+    fs7.rmSync(worktree, { recursive: true, force: true, maxRetries: 3 });
     await exec("git", ["worktree", "prune"], { cwd: gitRoot }).catch(() => void 0);
   }
-  if (fs6.existsSync(worktree)) log.warning(`Could not remove worktree ${worktree}`);
+  if (fs7.existsSync(worktree)) log.warning(`Could not remove worktree ${worktree}`);
 }
 async function runAction(env = process.env) {
   const inputs = readInputs(env);
   const workspace = env.GITHUB_WORKSPACE || process.cwd();
-  const tmp = fs6.mkdtempSync(path4.join(env.RUNNER_TEMP || os.tmpdir(), "bundle-mop-"));
+  const tmp = fs7.mkdtempSync(path6.join(env.RUNNER_TEMP || os.tmpdir(), "bundle-mop-"));
   const event = readEvent(env.GITHUB_EVENT_PATH);
   const pr = event?.pull_request;
-  const gitRoot = path4.resolve(await git(["rev-parse", "--show-toplevel"], workspace));
-  const appDir = path4.resolve(workspace, inputs.workingDirectory);
-  const relApp = path4.relative(gitRoot, appDir);
-  if (relApp.startsWith("..") || path4.isAbsolute(relApp)) throw new InputError(`working-directory ${appDir} is outside the repository ${gitRoot}`);
+  const gitRoot = path6.resolve(await git(["rev-parse", "--show-toplevel"], workspace));
+  const appDir = path6.resolve(workspace, inputs.workingDirectory);
+  const relApp = path6.relative(gitRoot, appDir);
+  if (relApp.startsWith("..") || path6.isAbsolute(relApp)) throw new InputError(`working-directory ${appDir} is outside the repository ${gitRoot}`);
   const baseRef = inputs.baseRef ?? pr?.base?.sha;
   if (!baseRef) throw new InputError("Nothing to compare against: run on a pull_request event or set the base-ref input.");
-  const prFile = path4.join(tmp, "pr.jsonl");
-  const baseFile = path4.join(tmp, "base.jsonl");
+  const prFile = path6.join(tmp, "pr.jsonl");
+  const baseFile = path6.join(tmp, "base.jsonl");
   log.group("Bundle Mop: analyze this commit");
   const { nextVersion } = await captureSnapshot(appDir, "pr", prFile);
   log.endGroup();
@@ -1389,24 +1599,35 @@ async function runAction(env = process.env) {
   const baseSha = await resolveCommit(gitRoot, baseRef);
   await captureBase(gitRoot, relApp, baseSha, tmp, inputs.installCommand, baseFile);
   log.endGroup();
-  const base = parseNextAnalyzeExport(fs6.readFileSync(baseFile, "utf8"));
-  const head = parseNextAnalyzeExport(fs6.readFileSync(prFile, "utf8"));
-  const diff = diffSnapshots(base, head);
-  const findings = runRules(diff, base, head, { minBytes: inputs.minBytes });
-  const markdown = renderMarkdown(diff, { findings, minBytes: inputs.minBytes });
-  const reportPath = path4.join(tmp, "bundle-mop.md");
-  const jsonPath = path4.join(tmp, "bundle-mop.json");
-  fs6.writeFileSync(reportPath, markdown);
-  fs6.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, findings }, null, 2));
+  const configFile = inputs.config ? path6.resolve(gitRoot, inputs.config) : findConfig([appDir, gitRoot]);
+  let config;
+  if (configFile) {
+    config = loadConfig(configFile);
+    const rel = path6.relative(gitRoot, configFile);
+    config.source = rel && !rel.startsWith("..") && !path6.isAbsolute(rel) ? rel.replace(/\\/g, "/") : configFile;
+    log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? "y" : "ies"})`);
+  }
+  const base = parseNextAnalyzeExport(fs7.readFileSync(baseFile, "utf8"));
+  const head = parseNextAnalyzeExport(fs7.readFileSync(prFile, "utf8"));
+  const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...config ? { config } : {} });
+  const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
+  const reportPath = path6.join(tmp, "bundle-mop.md");
+  const jsonPath = path6.join(tmp, "bundle-mop.json");
+  fs7.writeFileSync(reportPath, markdown);
+  fs7.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, budgets, findings }, null, 2));
   appendSummary(markdown, env);
   const outcome = summarize(diff, inputs.minBytes);
-  const result = { reportPath, jsonPath, ...outcome, findings };
+  const budgetsExceeded = budgets.filter((b) => b.status === "over").length;
+  const result = { reportPath, jsonPath, ...outcome, budgetsExceeded, findings };
   setOutput("report-path", reportPath, env);
   setOutput("json-path", jsonPath, env);
   setOutput("routes-changed", outcome.routesChanged, env);
   setOutput("largest-first-load-delta", outcome.largestFirstLoadDelta, env);
   setOutput("findings", findings.length, env);
-  log.info(`Bundle Mop: ${outcome.routesChanged} route(s) changed, ${findings.length} finding(s). Report: ${reportPath}`);
+  setOutput("budgets-exceeded", budgetsExceeded, env);
+  log.info(
+    `Bundle Mop: ${outcome.routesChanged} route(s) changed, ${findings.length} finding(s)${config ? `, ${budgetsExceeded} budget(s) exceeded` : ""}. Report: ${reportPath}`
+  );
   if (inputs.comment && pr?.number) {
     if (!inputs.githubToken || !env.GITHUB_REPOSITORY) {
       log.warning("No github-token or GITHUB_REPOSITORY; skipping the PR comment. The report is in the job summary.");

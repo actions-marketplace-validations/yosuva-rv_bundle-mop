@@ -2,8 +2,15 @@
 
 > Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
 
-**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine, markdown PR comment and
-GitHub Action work. See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
+**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine, per-route budgets,
+markdown PR comment and GitHub Action work. See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
+
+**Budgets:** add a `bundle-mop.config.json` and PRs that push a route over its limit fail the check.
+See [docs/budgets.md](docs/budgets.md).
+
+```json
+{ "budgets": [{ "route": "/", "firstLoad": "150 kB" }, { "route": "/**", "firstLoad": "300 kB" }] }
+```
 
 ## GitHub Action
 

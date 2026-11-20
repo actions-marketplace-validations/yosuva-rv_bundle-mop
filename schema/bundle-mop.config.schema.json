@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/yosuva-rv/bundle-mop/main/schema/bundle-mop.config.schema.json",
+  "title": "Bundle Mop config",
+  "description": "Per-route JS size budgets for Bundle Mop. The first entry whose route pattern matches a route applies.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "budgets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["route"],
+        "anyOf": [{ "required": ["firstLoad"] }, { "required": ["lazy"] }, { "required": ["client"] }],
+        "properties": {
+          "route": {
+            "type": "string",
+            "pattern": "^(/.*|\\*\\*)$",
+            "description": "Route pattern: exact (\"/\"), \"*\" matches one segment, \"**\" any number of segments. Wildcards never match Next-internal routes such as /_not-found.",
+            "examples": ["/", "/dashboard", "/blog/*", "/dashboard/**", "/**"]
+          },
+          "firstLoad": { "$ref": "#/$defs/size", "description": "Max first-load JS (minified bytes) for matching routes." },
+          "lazy": { "$ref": "#/$defs/size", "description": "Max lazily loaded (next/dynamic) JS for matching routes." },
+          "client": { "$ref": "#/$defs/size", "description": "Max total client JS (first-load + lazy) for matching routes." }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "size": {
+      "description": "A size like \"150 kB\" (1 kB = 1000 B), \"146.5 KiB\", \"1.5 MB\", or a number of bytes.",
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*([bB]|[kK][bB]|[kK][iI][bB]|[mM][bB]|[mM][iI][bB])?\\s*$" }
+      ]
+    }
+  }
+}

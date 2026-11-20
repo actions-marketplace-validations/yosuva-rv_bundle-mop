@@ -10,7 +10,8 @@ describe('inputs', () => {
   });
 
   it('applies defaults', () => {
-    expect(readInputs({})).toEqual({ workingDirectory: '.', minBytes: 1000, comment: true, failOn: 'none' });
+    // fail-on defaults to error: only exceeded budgets produce errors, so nothing fails without a budgets file.
+    expect(readInputs({})).toEqual({ workingDirectory: '.', minBytes: 1000, comment: true, failOn: 'error' });
   });
 
   it('parses all inputs', () => {
@@ -22,8 +23,10 @@ describe('inputs', () => {
       INPUT_COMMENT: 'false',
       'INPUT_FAIL-ON': 'Warning',
       'INPUT_GITHUB-TOKEN': 'tok',
+      INPUT_CONFIG: 'apps/web/bundle-mop.config.json',
     };
     expect(readInputs(env)).toEqual({
+      config: 'apps/web/bundle-mop.config.json',
       workingDirectory: 'apps/web',
       baseRef: 'main',
       installCommand: 'pnpm i',

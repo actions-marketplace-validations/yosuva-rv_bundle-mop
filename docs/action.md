@@ -50,13 +50,14 @@ Cost per run: one extra dependency install plus two `next analyze` runs (each a 
 | `install-command` | from lockfile | Runs in the lockfile's directory in the base checkout |
 | `min-bytes` | `1000` | Noise floor: smaller changes are hidden and never flagged |
 | `comment` | `true` | Create or update the PR comment |
-| `fail-on` | `none` | Fail the step on a finding of this severity or worse: `none`, `info`, `warning`, `error` |
+| `config` | auto | Budgets file ([docs/budgets.md](budgets.md)). Default: `bundle-mop.config.json` in `working-directory`, then the repository root |
+| `fail-on` | `error` | Fail the step on a finding of this severity or worse: `none`, `info`, `warning`, `error`. Only exceeded budgets are errors, so without budgets nothing fails |
 | `github-token` | `github.token` | Needs `pull-requests: write` to comment |
 
 ## Outputs
 
-`report-path` (markdown), `json-path` (diff + findings), `routes-changed`, `largest-first-load-delta` (bytes),
-`findings` (count).
+`report-path` (markdown), `json-path` (diff, budgets and findings), `routes-changed`, `largest-first-load-delta`
+(bytes), `findings` (count), `budgets-exceeded` (count).
 
 ## Security and forks
 

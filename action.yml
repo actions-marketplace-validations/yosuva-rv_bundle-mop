@@ -21,9 +21,12 @@ inputs:
   comment:
     description: "Post (or update) a pull request comment with the report."
     default: 'true'
+  config:
+    description: "Budgets file. Defaults to bundle-mop.config.json in working-directory, then the repository root."
+    default: ''
   fail-on:
-    description: "Fail the step when a finding of this severity or worse exists. One of none, info, warning, error."
-    default: 'none'
+    description: "Fail the step when a finding of this severity or worse exists: none, info, warning, error. Only exceeded budgets produce errors."
+    default: 'error'
   github-token:
     description: "Token used to comment. Needs the pull-requests write permission."
     default: ${{ github.token }}
@@ -38,7 +41,9 @@ outputs:
   largest-first-load-delta:
     description: "Largest first-load JS growth on any route, in bytes (0 if none grew)."
   findings:
-    description: "Number of findings (suggestions)."
+    description: "Number of findings (suggestions and budget results)."
+  budgets-exceeded:
+    description: "Number of budgets this PR exceeded (newly over, or grew while over)."
 
 runs:
   using: node24

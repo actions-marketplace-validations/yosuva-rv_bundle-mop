@@ -11,6 +11,8 @@ export interface ActionInputs {
   comment: boolean;
   failOn: FailOn;
   githubToken?: string;
+  /** Budgets file (relative to the repository root, or absolute). */
+  config?: string;
 }
 
 export class InputError extends Error {}
@@ -31,7 +33,7 @@ export function readInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
   const minBytes = Number(minRaw);
   if (!Number.isInteger(minBytes) || minBytes < 0) throw new InputError(`Input "min-bytes" must be a non-negative integer, got "${minRaw}"`);
 
-  const failOn = (getInput('fail-on', env) || 'none').toLowerCase();
+  const failOn = (getInput('fail-on', env) || 'error').toLowerCase();
   if (!['none', 'info', 'warning', 'error'].includes(failOn)) {
     throw new InputError(`Input "fail-on" must be one of none, info, warning, error; got "${failOn}"`);
   }
@@ -48,6 +50,8 @@ export function readInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
   if (installCommand) inputs.installCommand = installCommand;
   const token = getInput('github-token', env);
   if (token) inputs.githubToken = token;
+  const config = getInput('config', env);
+  if (config) inputs.config = config;
   return inputs;
 }
 

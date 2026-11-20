@@ -38,6 +38,14 @@ describe('rules: fixtures basic-before -> basic (moment added via DatePicker)', 
   });
 });
 
+describe('rules: severity contract', () => {
+  it('no built-in rule can emit an error (fail-on defaults to error; only budgets may fail a PR)', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('../src/rules/rules.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/severity:\s*'error'/);
+  });
+});
+
 describe('rules: no false positives on real fixtures', () => {
   it('removing moment (reverse diff) produces no findings', () => {
     expect(findingsFor(loadSnapshot('basic'), loadSnapshot('basic-before'))).toEqual([]);

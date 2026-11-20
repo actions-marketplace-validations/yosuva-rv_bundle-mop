@@ -82,8 +82,11 @@ jobs:
         with:
           working-directory: fixtures/basic
           base-ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'HEAD~1' }}
+          config: .github/bundle-mop.ci.json # roomy budget: exercises config loading without failing
       - name: Check outputs
         run: |
           test -s "${{ steps.mop.outputs.report-path }}"
           test -s "${{ steps.mop.outputs.json-path }}"
-          echo "routes-changed=${{ steps.mop.outputs.routes-changed }} largest-first-load-delta=${{ steps.mop.outputs.largest-first-load-delta }} findings=${{ steps.mop.outputs.findings }}"
+          test "${{ steps.mop.outputs.budgets-exceeded }}" = "0"
+          grep -q '"budgets": \[' "${{ steps.mop.outputs.json-path }}"
+          echo "routes-changed=${{ steps.mop.outputs.routes-changed }} largest-first-load-delta=${{ steps.mop.outputs.largest-first-load-delta }} findings=${{ steps.mop.outputs.findings }} budgets-exceeded=${{ steps.mop.outputs.budgets-exceeded }}"

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { COMMENT_MARKER, diffSnapshots, parseNextAnalyzeExport, renderMarkdown, runRules } from 'bundle-mop';
-import type { Finding } from 'bundle-mop';
+import { analyze, COMMENT_MARKER, findConfig, loadConfig, parseNextAnalyzeExport, renderMarkdown } from 'bundle-mop';
+import type { BudgetConfig, Finding } from 'bundle-mop';
 import { exec } from './exec.js';
 import { GitHubApiError, GitHubClient } from './github.js';
 import { appendSummary, InputError, log, readInputs, setOutput } from './inputs.js';
@@ -15,6 +15,7 @@ export interface ActionResult {
   jsonPath: string;
   routesChanged: number;
   largestFirstLoadDelta: number;
+  budgetsExceeded: number;
   findings: Finding[];
   comment?: { action: 'created' | 'updated'; url: string };
   /** Set when the step should fail (fail-on). */
@@ -101,26 +102,39 @@ export async function runAction(env: NodeJS.ProcessEnv = process.env): Promise<A
   await captureBase(gitRoot, relApp, baseSha, tmp, inputs.installCommand, baseFile);
   log.endGroup();
 
+  // Budgets come from the PR's checkout (JSON only, so nothing executes).
+  const configFile = inputs.config ? path.resolve(gitRoot, inputs.config) : findConfig([appDir, gitRoot]);
+  let config: BudgetConfig | undefined;
+  if (configFile) {
+    config = loadConfig(configFile);
+    const rel = path.relative(gitRoot, configFile);
+    config.source = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.replace(/\\/g, '/') : configFile;
+    log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? 'y' : 'ies'})`);
+  }
+
   const base = parseNextAnalyzeExport(fs.readFileSync(baseFile, 'utf8'));
   const head = parseNextAnalyzeExport(fs.readFileSync(prFile, 'utf8'));
-  const diff = diffSnapshots(base, head);
-  const findings = runRules(diff, base, head, { minBytes: inputs.minBytes });
-  const markdown = renderMarkdown(diff, { findings, minBytes: inputs.minBytes });
+  const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...(config ? { config } : {}) });
+  const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
 
   const reportPath = path.join(tmp, 'bundle-mop.md');
   const jsonPath = path.join(tmp, 'bundle-mop.json');
   fs.writeFileSync(reportPath, markdown);
-  fs.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, findings }, null, 2));
+  fs.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, budgets, findings }, null, 2));
   appendSummary(markdown, env);
 
   const outcome = summarize(diff, inputs.minBytes);
-  const result: ActionResult = { reportPath, jsonPath, ...outcome, findings };
+  const budgetsExceeded = budgets.filter((b) => b.status === 'over').length;
+  const result: ActionResult = { reportPath, jsonPath, ...outcome, budgetsExceeded, findings };
   setOutput('report-path', reportPath, env);
   setOutput('json-path', jsonPath, env);
   setOutput('routes-changed', outcome.routesChanged, env);
   setOutput('largest-first-load-delta', outcome.largestFirstLoadDelta, env);
   setOutput('findings', findings.length, env);
-  log.info(`Bundle Mop: ${outcome.routesChanged} route(s) changed, ${findings.length} finding(s). Report: ${reportPath}`);
+  setOutput('budgets-exceeded', budgetsExceeded, env);
+  log.info(
+    `Bundle Mop: ${outcome.routesChanged} route(s) changed, ${findings.length} finding(s)${config ? `, ${budgetsExceeded} budget(s) exceeded` : ''}. Report: ${reportPath}`,
+  );
 
   if (inputs.comment && pr?.number) {
     if (!inputs.githubToken || !env.GITHUB_REPOSITORY) {

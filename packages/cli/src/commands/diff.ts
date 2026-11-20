@@ -3,10 +3,11 @@ import { parseArgs } from 'node:util';
 import zlib from 'node:zlib';
 import { AdapterError, parseNextAnalyzeExport } from '../adapter/index.js';
 import type { AnalyzeSnapshot } from '../adapter/index.js';
-import { diffSnapshots } from '../model/diff.js';
+import { ConfigError, findConfig, loadConfig } from '../budgets/config.js';
+import type { BudgetConfig } from '../budgets/config.js';
+import { analyze } from '../pipeline.js';
 import { renderMarkdown } from '../report/markdown.js';
 import { renderTextDiff } from '../report/text.js';
-import { runRules } from '../rules/index.js';
 
 export interface CommandResult {
   code: number;
@@ -19,7 +20,10 @@ export const DIFF_USAGE = `Usage: bundle-mop diff <base-export> <pr-export> [opt
   --format <text|markdown|json>  Output format (default text). markdown = PR comment
   --json                       Same as --format json
   --top <n>                    Changed modules listed per route (default 10)
-  --min-bytes <n>              Noise floor for rules and the markdown report (default 1000)`;
+  --min-bytes <n>              Noise floor for rules and the markdown report (default 1000)
+  --config <file>              Budgets file (default: ./bundle-mop.config.json if it exists)
+  --fail-on <level>            Exit 1 on a finding at or above: none, info, warning, error
+                               (default error: only exceeded budgets produce errors)`;
 
 const FORMATS = ['text', 'markdown', 'json'] as const;
 type Format = (typeof FORMATS)[number];
@@ -59,6 +63,8 @@ export function diffCommand(argv: string[]): CommandResult {
         format: { type: 'string' },
         top: { type: 'string' },
         'min-bytes': { type: 'string' },
+        config: { type: 'string' },
+        'fail-on': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     });
@@ -72,9 +78,13 @@ export function diffCommand(argv: string[]): CommandResult {
   let top: number;
   let minBytes: number;
   let format: Format;
+  let failOn: FailOn;
   try {
     top = nonNegInt(values.top, 10, '--top');
     minBytes = nonNegInt(values['min-bytes'], 1_000, '--min-bytes');
+    const fo = values['fail-on'] ?? 'error';
+    if (!(FAIL_ON as readonly string[]).includes(fo)) throw new UsageError(`--fail-on must be one of ${FAIL_ON.join(', ')}`);
+    failOn = fo as FailOn;
     const f = values.json ? 'json' : (values.format ?? 'text');
     if (!(FORMATS as readonly string[]).includes(f)) throw new UsageError(`--format must be one of ${FORMATS.join(', ')}`);
     if (values.json && values.format && values.format !== 'json') throw new UsageError('--json conflicts with --format');
@@ -85,18 +95,30 @@ export function diffCommand(argv: string[]): CommandResult {
 
   const [baseFile, prFile] = positionals as [string, string];
   try {
+    let config: BudgetConfig | undefined;
+    const configFile = values.config ?? findConfig([process.cwd()]);
+    if (configFile) config = loadConfig(configFile);
     const base = readSnapshot(baseFile);
     const pr = readSnapshot(prFile);
-    const diff = diffSnapshots(base, pr);
-    const findings = runRules(diff, base, pr, { minBytes });
+    const { diff, findings, budgets } = analyze(base, pr, { minBytes, ...(config ? { config } : {}) });
     const output =
       format === 'json'
-        ? JSON.stringify({ ...diff, findings }, null, 2)
+        ? JSON.stringify({ ...diff, budgets, findings }, null, 2)
         : format === 'markdown'
-          ? renderMarkdown(diff, { findings, top, minBytes })
-          : renderTextDiff(diff, { top, findings });
-    return { code: 0, output };
+          ? renderMarkdown(diff, { findings, budgets, top, minBytes })
+          : renderTextDiff(diff, { top, findings, budgets });
+    return { code: failsOn(findings, failOn) ? 1 : 0, output };
   } catch (e) {
+    if (e instanceof ConfigError) return { code: 1, output: `error: ${e.message}` };
     return { code: 1, output: `error: ${(e as Error).message}` };
   }
+}
+
+export const FAIL_ON = ['none', 'info', 'warning', 'error'] as const;
+export type FailOn = (typeof FAIL_ON)[number];
+const RANK = { info: 1, warning: 2, error: 3 } as const;
+
+/** True when any finding is at or above `failOn` severity. Only budgets produce `error`. */
+export function failsOn(findings: { severity: 'info' | 'warning' | 'error' }[], failOn: FailOn): boolean {
+  return failOn !== 'none' && findings.some((f) => RANK[f.severity] >= RANK[failOn]);
 }
