@@ -126,6 +126,19 @@ describe('bundle-mop diff', () => {
     expect(run(['diff', BASE, PR, '--fail-on', 'sometimes'])).toMatchObject({ code: 1, output: expect.stringContaining('--fail-on must be one of') });
   });
 
+  it('summarises routes under the noise floor instead of listing them', () => {
+    const page = { path: '[project]/app/page.tsx', size: 1_000 };
+    const b = writeTmp('nb.jsonl', fakeExportText('b', { '/': [page], '/big': [page], '/tiny': [page] }));
+    const p = writeTmp('np.jsonl', fakeExportText('p', { '/': [page], '/big': [{ ...page, size: 9_000 }], '/tiny': [{ ...page, size: 1_004 }] }));
+    const quiet = run(['diff', b, p]).output;
+    expect(quiet).toContain('/big  first-load');
+    expect(quiet).not.toContain('/tiny  first-load');
+    expect(quiet).toContain('1 route(s) changed by less than 1.0 kB (not shown; --min-bytes 0 lists them).');
+    const all = run(['diff', b, p, '--min-bytes', '0']).output;
+    expect(all).toContain('/tiny  first-load 1.0 kB → 1.0 kB  (+4 B, +0.40%)');
+    expect(all).not.toContain('not shown');
+  });
+
   it('shows usage with --help', () => {
     expect(run(['diff', '--help'])).toMatchObject({ code: 0, output: expect.stringContaining('Usage: bundle-mop diff') });
   });
@@ -139,5 +152,13 @@ describe('byte formatting', () => {
     expect(formatDelta(61_346)).toBe('+61.3 kB');
     expect(formatDelta(-29)).toBe('-29 B');
     expect(formatDelta(0)).toBe('±0 B');
+  });
+
+  it('switches to MB instead of printing "1000.0 kB"', () => {
+    expect(formatBytes(999_949)).toBe('999.9 kB');
+    expect(formatBytes(999_950)).toBe('1.00 MB');
+    expect(formatBytes(1_000_000)).toBe('1.00 MB');
+    expect(formatBytes(1_040_000)).toBe('1.04 MB');
+    expect(formatDelta(-1_500_000)).toBe('-1.50 MB');
   });
 });

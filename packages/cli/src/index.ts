@@ -13,7 +13,7 @@ export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
 export { COMMENT_MARKER, formatChainMarkdown, renderMarkdown } from './report/markdown.js';
 export type { MarkdownOptions } from './report/markdown.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 export const HELP = `bundle-mop v${VERSION}
 

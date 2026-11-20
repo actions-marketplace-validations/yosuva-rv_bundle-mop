@@ -68,7 +68,12 @@ export interface TextOptions {
   findings?: Finding[];
   /** Budget results from checkBudgets(). */
   budgets?: BudgetResult[];
+  /** Routes whose JS changed by less than this are summarised, not listed (default 1000 B; 0 lists all). */
+  minBytes?: number;
 }
+
+const routeSignificant = (r: RouteDiff, min: number) =>
+  r.status !== 'changed' || Math.abs(r.firstLoad.raw.delta) >= min || Math.abs(r.lazy.raw.delta) >= min;
 
 const BUDGET_MARK: Record<BudgetResult['status'], string> = { over: 'x', 'still-over': '!', fixed: '✓', ok: '✓' };
 
@@ -111,10 +116,17 @@ export function renderTextDiff(diff: SnapshotDiff, options: TextOptions = {}): s
     `${changed} changed, ${added} added, ${removed} removed, ${unchanged} unchanged route(s)`,
     'Sizes are minified client JS. gzip figures are estimates.',
   ];
+  const min = options.minBytes ?? 1_000;
+  let quiet = 0;
   for (const r of diff.routes) {
     if (r.status === 'unchanged') continue;
+    if (!routeSignificant(r, min)) {
+      quiet++;
+      continue;
+    }
     out.push('', ...routeBlock(r, top));
   }
+  if (quiet) out.push('', `${quiet} route(s) changed by less than ${formatBytes(min)} (not shown; --min-bytes 0 lists them).`);
   const all = options.findings ?? [];
   out.push(...budgetLines(options.budgets ?? [], all.filter((f) => f.ruleId === 'budget')));
   const findings = all.filter((f) => f.ruleId !== 'budget');

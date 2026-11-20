@@ -3,8 +3,14 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.1.1 (2026-11-20)
 
+Polish found while building the [demo app](https://github.com/yosuva-rv/bundle-mop-demo).
+
+- Sizes of 1 MB and over print as MB with two decimals (`1.00 MB`, `1.04 MB`) instead of `1000.0 kB`.
+- `server-candidate` no longer says "Imported by X" when X is the `"use client"` file it already named.
+- Text report: routes whose JS changed by less than `--min-bytes` are summarised in one line instead of listed
+  (`--min-bytes 0` lists them), matching the PR comment.
 - Action: reworded the `action.yml` descriptions without apostrophes. The GitHub Marketplace rendered
   "PR's" as "PR s" in the listing's About box.
 

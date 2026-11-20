@@ -212,6 +212,13 @@ describe('budgets in the pipeline and reports', () => {
     expect(md).toMatch(/3 suggestions/);
   });
 
+  it('a 1 MB budget prints as MB, not "1000.0 kB"', () => {
+    const big = analyze(base, pr, { config: config([{ route: '/dashboard', firstLoad: '1 MB' }]) });
+    const md = renderMarkdown(big.diff, { findings: big.findings, budgets: big.budgets });
+    expect(md).toContain('| `/dashboard` | first-load JS | 630.5 kB | 1.00 MB | ✅ 63% used |');
+    expect(md).not.toContain('1000.0 kB');
+  });
+
   it('text report lists budgets', () => {
     const text = renderTextDiff(a.diff, { findings: a.findings, budgets: a.budgets });
     expect(text).toContain('  x /dashboard  first-load JS 630.5 kB / 600.0 kB  (over by 30.6 kB)');

@@ -90,7 +90,8 @@ export const serverCandidate: Rule = {
         ruleId: this.id,
         severity: 'info',
         title: `${entry.name} runs in the browser because of "use client" in ${boundary}`,
-        message: `${entry.name} reaches the browser through the "use client" boundary in ${boundary}.${importedBy(chain)} Server Component code isn't sent to the browser.`,
+        // Skip "Imported by X" when X is the boundary file itself; it would just repeat the name.
+        message: `${entry.name} reaches the browser through the "use client" boundary in ${boundary}.${chain.importer === chain.clientBoundary ? '' : importedBy(chain)} Server Component code isn't sent to the browser.`,
         suggestion: `If the ${entry.name} work only formats or parses data, do it in a Server Component and pass the result to the client component as props. Keep only the interactive part behind "use client".`,
         docs: DOCS.serverComponents,
         subject: p.key,

@@ -106,7 +106,7 @@ export function diffCommand(argv: string[]): CommandResult {
         ? JSON.stringify({ ...diff, budgets, findings }, null, 2)
         : format === 'markdown'
           ? renderMarkdown(diff, { findings, budgets, top, minBytes })
-          : renderTextDiff(diff, { top, findings, budgets });
+          : renderTextDiff(diff, { top, findings, budgets, minBytes });
     return { code: failsOn(findings, failOn) ? 1 : 0, output };
   } catch (e) {
     if (e instanceof ConfigError) return { code: 1, output: `error: ${e.message}` };

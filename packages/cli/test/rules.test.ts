@@ -110,6 +110,19 @@ describe('rules: synthetic cases', () => {
     expect(f).toEqual([]);
   });
 
+  it('server-candidate does not repeat the file name when the importer is the "use client" file', () => {
+    // The demo PR shape: page → LastUpdated ("use client") → moment, so importer === boundary.
+    const m = pnpm('moment', '2.31.0', 'moment.js');
+    const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, { path: m, size: 61_000 }], widgetGraph([ident(m)])));
+    const sc = f.find((x) => x.ruleId === 'server-candidate');
+    expect(sc?.message).toBe(
+      'moment reaches the browser through the "use client" boundary in components/Widget.tsx. Server Component code isn\'t sent to the browser.',
+    );
+    // The fixture pair (importer DatePicker ≠ boundary DashboardClient) still names the importer.
+    const fixture = findingsFor(loadSnapshot('basic-before'), loadSnapshot('basic')).find((x) => x.ruleId === 'server-candidate');
+    expect(fixture?.message).toContain('Imported by components/DatePicker.tsx.');
+  });
+
   it('does not suggest lazy loading or server rendering for code already behind a dynamic import', () => {
     const m = pnpm('moment', '2.31.0', 'moment.js');
     const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, { path: m, size: 61_000, lazy: true }], widgetGraph([ident(m)], { async: true })));

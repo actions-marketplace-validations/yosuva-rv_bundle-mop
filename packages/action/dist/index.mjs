@@ -547,7 +547,9 @@ var shortKey = (key) => key.replace(/^(app|pkg|workspace|internal|external|unkno
 function formatBytes(n) {
   const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
-  return abs < 1e3 ? `${sign}${abs} B` : `${sign}${(abs / 1e3).toFixed(1)} kB`;
+  if (abs < 1e3) return `${sign}${abs} B`;
+  if (abs < 999950) return `${sign}${(abs / 1e3).toFixed(1)} kB`;
+  return `${sign}${(abs / 1e6).toFixed(2)} MB`;
 }
 var formatDelta = (n) => n > 0 ? `+${formatBytes(n)}` : n === 0 ? "\xB10 B" : formatBytes(n);
 
@@ -901,7 +903,8 @@ var serverCandidate = {
         ruleId: this.id,
         severity: "info",
         title: `${entry.name} runs in the browser because of "use client" in ${boundary}`,
-        message: `${entry.name} reaches the browser through the "use client" boundary in ${boundary}.${importedBy(chain)} Server Component code isn't sent to the browser.`,
+        // Skip "Imported by X" when X is the boundary file itself; it would just repeat the name.
+        message: `${entry.name} reaches the browser through the "use client" boundary in ${boundary}.${chain.importer === chain.clientBoundary ? "" : importedBy(chain)} Server Component code isn't sent to the browser.`,
         suggestion: `If the ${entry.name} work only formats or parses data, do it in a Server Component and pass the result to the client component as props. Keep only the interactive part behind "use client".`,
         docs: DOCS.serverComponents,
         subject: p.key,
@@ -1338,7 +1341,7 @@ function renderMarkdown(diff, options = {}) {
 }
 
 // ../cli/src/index.ts
-var VERSION = "0.1.0";
+var VERSION = "0.1.1";
 var HELP = `bundle-mop v${VERSION}
 
 Explains every PR's Next.js bundle change: which import, through which chain,
