@@ -3,6 +3,11 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
+## Unreleased
+
+- Docs: a simpler README with a logo, a screenshot of a real PR comment, a one-file quick start and an FAQ;
+  developer notes moved to CONTRIBUTING.md. The npm page shows the logo and screenshot too.
+
 ## 0.1.1 (2026-11-20)
 
 Polish found while building the [demo app](https://github.com/yosuva-rv/bundle-mop-demo).

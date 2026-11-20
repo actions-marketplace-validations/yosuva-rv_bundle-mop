@@ -1,84 +1,126 @@
-# Bundle Mop
+<p align="center">
+  <img src="docs/assets/logo.svg" width="96" height="96" alt="Bundle Mop logo">
+</p>
 
-> Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
+<h1 align="center">Bundle Mop</h1>
 
-**Status: early.** The analyzer adapter, base-vs-PR diff, import-chain "why", rules engine, per-route budgets,
-markdown PR comment and GitHub Action work. See an [example PR comment](packages/cli/test/golden/basic-before-to-basic.md).
+<p align="center">
+  <strong>See why your pull request made your Next.js app heavier, and how to fix it.</strong>
+</p>
 
-**Budgets:** add a `bundle-mop.config.json` and PRs that push a route over its limit fail the check.
-See [docs/budgets.md](docs/budgets.md).
+<p align="center">
+  <a href="https://www.npmjs.com/package/bundle-mop"><img src="https://img.shields.io/npm/v/bundle-mop?color=22a55f&label=npm" alt="npm version"></a>
+  <a href="https://github.com/marketplace/actions/bundle-mop"><img src="https://img.shields.io/badge/GitHub%20Marketplace-Bundle%20Mop-22a55f?logo=github" alt="GitHub Marketplace"></a>
+  <a href="https://github.com/yosuva-rv/bundle-mop/actions/workflows/ci.yml"><img src="https://github.com/yosuva-rv/bundle-mop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
-```json
-{ "budgets": [{ "route": "/", "firstLoad": "150 kB" }, { "route": "/**", "firstLoad": "300 kB" }] }
-```
+---
 
-## GitHub Action
+Bundle Mop is a GitHub Action (and CLI) for **Next.js 16** apps. On every pull request it posts one comment that
+answers three questions:
+
+- 📦 **What changed?** Which pages now ship more (or less) JavaScript.
+- 🔍 **Why?** The exact import chain, e.g. `page.tsx → LastUpdated.tsx ("use client") → moment`.
+- 🧹 **How do I fix it?** Concrete suggestions, with code you can copy.
+
+<p align="center">
+  <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">
+    <img src="docs/assets/pr-comment.png" width="640" alt="A Bundle Mop comment on a pull request: the home page grew by 61.8 kB, a size budget was exceeded, and the import chain shows moment coming in through a use-client component">
+  </a>
+  <br>
+  <sub>A real comment from the <a href="https://github.com/yosuva-rv/bundle-mop-demo">demo app</a>: <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">adding moment</a> · <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/2">lazy-loading a chart (−363 kB)</a></sub>
+</p>
+
+## Quick start
+
+Add this file to your repository and open a pull request. That's it.
 
 ```yaml
+# .github/workflows/bundle-mop.yml
+name: Bundle Mop
 on: pull_request
-permissions: { contents: read, pull-requests: write }
+
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   bundle-mop:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
-        with: { node-version: 22 }
-      - run: npm ci
+        with:
+          node-version: 22
+      - run: npm ci                   # or pnpm / yarn / bun
       - uses: yosuva-rv/bundle-mop@v0
+        # with:
+        #   working-directory: apps/web   # if your app isn't at the repo root
 ```
 
-Inputs, outputs, forks and security: [docs/action.md](docs/action.md).
+**Requires Next.js 16.4 or newer.** It reads Next's own bundle analyzer (`next analyze`); no extra build plugin needed.
 
-## CLI
+## Size budgets (optional)
 
-```
-/dashboard  first-load 569.3 kB → 630.5 kB  (+61.3 kB, +10.8%)
-  + pkg:moment/moment.js   +61.3 kB first-load  (added)
-      why: app/dashboard/page.tsx → components/DashboardClient.tsx ("use client") → components/DatePicker.tsx → moment/moment.js
+Want PRs to fail when a page gets too heavy? Add `bundle-mop.config.json` next to your app:
 
-Suggestions:
-  ! [heavy-package] moment adds 61.3 kB to first-load JS  (/dashboard)
-      → Use dayjs (similar API), date-fns (tree-shakeable; optimized by Next by default), or Intl.DateTimeFormat for plain formatting.
-  i [lazy-load-candidate] Lazy-load components/DatePicker.tsx to keep moment out of first-load JS  (/dashboard)
-        // components/DashboardClient.tsx
-        const DatePicker = dynamic(() => import('./DatePicker'));
+```json
+{
+  "budgets": [
+    { "route": "/", "firstLoad": "150 kB" },
+    { "route": "/**", "firstLoad": "300 kB" }
+  ]
+}
 ```
 
-Rules are listed in [docs/rules.md](docs/rules.md).
+A PR that pushes a page over its budget fails the check. A page that was *already* over budget only gets a warning,
+so nobody is blocked by someone else's code. [More about budgets →](docs/budgets.md)
+
+## What it suggests
+
+| When | Suggestion |
+|---|---|
+| A heavy library arrives (moment, full lodash, jQuery…) | A lighter alternative, e.g. moment → dayjs, date-fns or `Intl` |
+| A big package lands in a client component | Lazy-load it with `next/dynamic` (ready-to-paste snippet) |
+| A formatting library runs in the browser only because of `"use client"` | Do that work in a Server Component |
+| Something that was lazy-loaded is now loaded up front | Find the removed `next/dynamic` or new import |
+| The same package ships in two versions | Align the versions |
+| Many files of one package ship | Import subpaths or use `optimizePackageImports` |
+
+All suggestions come from fixed rules: **no AI, no API key, no data leaves your CI.** [All rules →](docs/rules.md)
+
+## Use it locally
 
 ```sh
-# in your Next.js 16 app, on each side of the change:
-next analyze --output --snapshot base && next analyze export --snapshot base > base.jsonl
-next analyze --output --snapshot pr   && next analyze export --snapshot pr   > pr.jsonl
+npx next analyze --output --snapshot base && npx next analyze export --snapshot base > base.jsonl
+# ...switch to your branch...
+npx next analyze --output --snapshot pr && npx next analyze export --snapshot pr > pr.jsonl
 
-bundle-mop diff base.jsonl pr.jsonl                     # text summary
-bundle-mop diff base.jsonl pr.jsonl --format markdown   # PR comment
-bundle-mop diff base.jsonl pr.jsonl --format json       # full diff + findings
-bundle-mop diff base.jsonl pr.jsonl --min-bytes 2000    # raise the noise floor (default 1000 B)
+npx bundle-mop diff base.jsonl pr.jsonl
 ```
 
-Bundle Mop compares `next analyze` snapshots (Next.js 16, Turbopack) between your base branch and
-a pull request. It shows per-route client JS changes, traces the import chain behind each
-regression, and suggests fixes through a deterministic rules engine.
+Options: `--format markdown|json`, `--config <file>`, `--min-bytes <n>`. Run `npx bundle-mop diff --help` for all of them.
 
-## Repo layout
+## FAQ
 
-```
-packages/cli/   the bundle-mop CLI (TypeScript, tsup, vitest)
-fixtures/       small Next.js 16 apps with known regressions, plus committed analyzer snapshots
-scripts/        snapshot-fixture.mjs: regenerate fixture snapshots
-docs/           analyzer format notes
-```
+**Does it slow down my CI?** It runs `next analyze` twice (your branch and the base) plus one extra install for the
+base. No `next build`. On a small app it takes about a minute.
 
-## Develop
+**What about pull requests from forks?** GitHub gives fork PRs a read-only token, so the comment can't be posted. The
+report still appears in the job summary.
 
-```sh
-pnpm install
-pnpm typecheck && pnpm test && pnpm build
-node scripts/snapshot-fixture.mjs basic base
-```
+**Why sizes in raw kB, not gzip?** Raw minified sizes from the analyzer are exact. Its gzip numbers are estimates that
+can be up to ~2× too high, so they're shown as estimates and never used for budgets.
+
+**Does it work with Next.js 14 or 15?** No. It needs the Turbopack analyzer export that shipped in Next.js 16.4.
+
+## Learn more
+
+- [GitHub Action: inputs, outputs, forks and security](docs/action.md)
+- [Budgets](docs/budgets.md) · [Rules](docs/rules.md) · [How the analyzer data works](docs/analyze-format.md)
+- [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
-MIT
+[MIT](LICENSE)

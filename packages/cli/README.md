@@ -1,6 +1,10 @@
+<img src="https://raw.githubusercontent.com/yosuva-rv/bundle-mop/main/docs/assets/logo.svg" width="72" height="72" alt="Bundle Mop logo">
+
 # bundle-mop
 
-> Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.
+> See why your pull request made your Next.js app heavier, and how to fix it.
+
+![A Bundle Mop pull request comment](https://raw.githubusercontent.com/yosuva-rv/bundle-mop/main/docs/assets/pr-comment.png)
 
 A CLI for **Next.js 16.4+** (App Router, Turbopack). It diffs two `next analyze export` snapshots, shows per-route
 JS changes, traces the import chain behind each regression, checks per-route budgets, and suggests fixes through a
