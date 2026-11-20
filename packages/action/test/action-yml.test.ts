@@ -23,6 +23,15 @@ describe('action.yml', () => {
     expect(typeof manifest.description).toBe('string');
   });
 
+  it('has no apostrophes in descriptions (the Marketplace renders "PR\'s" as "PR s")', () => {
+    const descriptions = [
+      manifest.description,
+      ...Object.values(manifest.inputs).map((i) => i.description),
+      ...Object.values(manifest.outputs).map((o) => o.description),
+    ];
+    for (const d of descriptions) expect(d, d).not.toMatch(/['’]/);
+  });
+
   it('declares exactly the inputs the code reads', () => {
     const read = [...source('inputs.ts').matchAll(/getInput\('([a-z-]+)'/g)].map((m) => m[1]);
     expect(Object.keys(manifest.inputs).sort()).toEqual([...new Set(read)].sort());

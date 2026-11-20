@@ -3,6 +3,11 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
+## Unreleased
+
+- Action: reworded the `action.yml` descriptions without apostrophes. The GitHub Marketplace rendered
+  "PR's" as "PR s" in the listing's About box.
+
 ## 0.1.0 (2026-11-20)
 
 First release.

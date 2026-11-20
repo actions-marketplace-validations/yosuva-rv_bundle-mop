@@ -1,5 +1,5 @@
 name: Bundle Mop
-description: "Explains every PR's Next.js bundle change (which import, through which chain) and how to fix it."
+description: "Explains the Next.js bundle change in every pull request (which import, through which chain) and how to fix it."
 author: yosuva-rv
 branding:
   icon: package
@@ -10,7 +10,7 @@ inputs:
     description: "Directory of the Next.js app, relative to the repository root."
     default: '.'
   base-ref:
-    description: "Commit or ref to compare against. Defaults to the pull request's base commit."
+    description: "Commit or ref to compare against. Defaults to the base commit of the pull request."
     default: ''
   install-command:
     description: "Command that installs dependencies in the base checkout. Defaults to one detected from the lockfile (pnpm, npm, yarn, bun)."
