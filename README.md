@@ -90,17 +90,20 @@ so nobody is blocked by someone else's code. [More about budgets →](docs/budge
 
 All suggestions come from fixed rules: **no AI, no API key, no data leaves your CI.** [All rules →](docs/rules.md)
 
-## Use it locally
+## Try it locally in one command
+
+Inside your Next.js app, on your branch:
 
 ```sh
-npx next analyze --output --snapshot base && npx next analyze export --snapshot base > base.jsonl
-# ...switch to your branch...
-npx next analyze --output --snapshot pr && npx next analyze export --snapshot pr > pr.jsonl
-
-npx bundle-mop diff base.jsonl pr.jsonl
+npx bundle-mop compare
 ```
 
-Options: `--format markdown|json`, `--config <file>`, `--min-bytes <n>`. Run `npx bundle-mop diff --help` for all of them.
+It compares your code (uncommitted changes included) with `main`, the same way a pull request would, and
+prints the report. Your files aren't touched: the base is analyzed in a temporary checkout, and the result is cached,
+so the next run takes seconds.
+
+Options: `--base <branch>`, `--format markdown|json`, `--config <file>`, `--verbose`. Run `npx bundle-mop compare --help`
+for all of them. Already have two `next analyze export` files? Use `npx bundle-mop diff base.jsonl pr.jsonl`.
 
 ## FAQ
 

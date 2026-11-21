@@ -30,10 +30,12 @@ jobs:
       - run: node packages/cli/dist/bin.js --version
 
   fixtures:
-    name: Fixtures (next build + analyze)
+    name: Fixtures (next build + analyze + compare)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2 # compare --base HEAD~1 needs the parent commit
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -52,6 +54,16 @@ jobs:
               && head -c 300 /tmp/export.jsonl && echo)
             echo "::endgroup::"
           done
+      - name: bundle-mop compare end to end (pnpm monorepo, worktree, cache)
+        run: |
+          set -euo pipefail
+          pnpm -F bundle-mop build
+          cd fixtures/basic
+          node ../../packages/cli/dist/bin.js compare --base HEAD~1 --format json > /tmp/compare.json
+          node -e "const j=require('/tmp/compare.json'); if (!j.compare || !j.routes.length) throw new Error('bad compare output'); console.log('compare OK:', j.compare.base.ref, j.routes.length, 'routes')"
+          # second run must come from the cache
+          node ../../packages/cli/dist/bin.js compare --base HEAD~1 2>&1 >/dev/null | tee /tmp/compare2.err
+          grep -q 'using cached analysis' /tmp/compare2.err
 
   action:
     name: Action (self-test on fixtures/basic)

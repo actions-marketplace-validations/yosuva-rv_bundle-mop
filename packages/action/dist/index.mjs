@@ -62,14 +62,16 @@ function appendSummary(markdown, env = process.env) {
 }
 
 // src/run.ts
-import fs7 from "fs";
-import os from "os";
-import path6 from "path";
+import fs10 from "fs";
+import os2 from "os";
+import path8 from "path";
 
-// ../cli/src/commands/diff.ts
-import fs3 from "fs";
+// ../cli/src/commands/compare.ts
+import fs8 from "fs";
+import os from "os";
+import path7 from "path";
+import { performance } from "perf_hooks";
 import { parseArgs } from "util";
-import zlib from "zlib";
 
 // ../cli/src/adapter/paths.ts
 var PROJECT = "[project]/";
@@ -92,15 +94,15 @@ function pnpmVersion(rel, name) {
   const version = seg.slice(encoded.length).split("_")[0];
   return version || void 0;
 }
-function normalizePath(path7, appRoot) {
-  if (path7.startsWith(EXTERNALS)) {
-    const subpath = path7.slice(EXTERNALS.length);
+function normalizePath(path9, appRoot) {
+  if (path9.startsWith(EXTERNALS)) {
+    const subpath = path9.slice(EXTERNALS.length);
     return { key: `external:${subpath}`, kind: "external", subpath };
   }
-  if (!path7.startsWith(PROJECT)) {
-    return { key: `unknown:${path7}`, kind: "unknown", subpath: path7 };
+  if (!path9.startsWith(PROJECT)) {
+    return { key: `unknown:${path9}`, kind: "unknown", subpath: path9 };
   }
-  const rel = path7.slice(PROJECT.length);
+  const rel = path9.slice(PROJECT.length);
   const slashed = `/${rel}`;
   const nm = slashed.lastIndexOf("/node_modules/");
   if (nm !== -1) {
@@ -340,101 +342,209 @@ function parseNextAnalyzeLines(lines, options = {}) {
   };
 }
 
-// ../cli/src/budgets/config.ts
+// ../cli/src/capture/base.ts
+import fs6 from "fs";
+import path3 from "path";
+
+// ../cli/src/capture/exec.ts
+import { spawn } from "child_process";
 import fs2 from "fs";
-import path from "path";
-var CONFIG_FILE = "bundle-mop.config.json";
-var BUDGET_METRICS = ["firstLoad", "lazy", "client"];
-var ConfigError = class extends Error {
-  constructor(message, source) {
-    super(source ? `${source}: ${message}` : message);
-    this.name = "ConfigError";
+var TAIL_LINES = 25;
+var ExecError = class extends Error {
+  constructor(command, exitCode, tail = "") {
+    super(`\`${command}\` failed with exit code ${exitCode}${tail ? `
+
+${tail}` : ""}`);
+    this.command = command;
+    this.exitCode = exitCode;
+    this.tail = tail;
+    this.name = "ExecError";
+  }
+  command;
+  exitCode;
+  tail;
+};
+function exec(command, args, opts) {
+  const display = [command, ...args].join(" ");
+  const echo = opts.echo ?? "inherit";
+  return new Promise((resolve, reject) => {
+    const out = opts.stdoutFile ? fs2.openSync(opts.stdoutFile, "w") : void 0;
+    const stdout = out ?? (opts.capture || echo === "quiet" ? "pipe" : echo === "stderr" ? 2 : "inherit");
+    const stderr = echo === "quiet" ? "pipe" : echo === "stderr" ? 2 : "inherit";
+    const child = spawn(command, args, {
+      cwd: opts.cwd,
+      shell: opts.shell ?? false,
+      env: opts.env ?? process.env,
+      stdio: ["ignore", stdout, stderr]
+    });
+    let captured = "";
+    let log2 = "";
+    child.stdout?.on("data", (d) => {
+      const s = d.toString("utf8");
+      if (opts.capture) captured += s;
+      else log2 += s;
+    });
+    child.stderr?.on("data", (d) => {
+      log2 += d.toString("utf8");
+    });
+    const close = () => {
+      if (out !== void 0) fs2.closeSync(out);
+    };
+    child.on("error", (e) => {
+      close();
+      reject(e);
+    });
+    child.on("close", (code2) => {
+      close();
+      if (code2 === 0) return resolve(captured);
+      const tail = echo === "quiet" ? log2.trimEnd().split(/\r?\n/).slice(-TAIL_LINES).join("\n") : "";
+      reject(new ExecError(display, code2, tail));
+    });
+  });
+}
+
+// ../cli/src/capture/git.ts
+import fs3 from "fs";
+var GitError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "GitError";
   }
 };
-var UNITS = { b: 1, kb: 1e3, kib: 1024, mb: 1e6, mib: 1048576 };
-function parseSize(value2) {
-  if (typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0) return Math.round(value2);
-  if (typeof value2 === "string") {
-    const m = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib)?\s*$/i.exec(value2);
-    if (m) return Math.round(Number(m[1]) * UNITS[(m[2] ?? "b").toLowerCase()]);
-  }
-  throw new Error(`invalid size ${JSON.stringify(value2)} (use e.g. "150 kB", "1.5 MB" or a number of bytes)`);
-}
-function parseConfig(text, source) {
-  let raw;
+var git = (args, cwd) => exec("git", args, { cwd, capture: true, echo: "quiet" }).then((s) => s.trim());
+async function gitRoot(dir) {
   try {
-    raw = JSON.parse(text);
-  } catch (e) {
-    throw new ConfigError(`invalid JSON: ${e.message}`, source);
+    return await git(["rev-parse", "--show-toplevel"], dir);
+  } catch {
+    throw new GitError(`${dir} is not inside a git repository.`);
   }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ConfigError("must be a JSON object", source);
-  const obj2 = raw;
-  for (const k of Object.keys(obj2)) {
-    if (k !== "budgets" && k !== "$schema") throw new ConfigError(`unknown key "${k}" (expected "budgets")`, source);
-  }
-  const list = obj2.budgets ?? [];
-  if (!Array.isArray(list)) throw new ConfigError('"budgets" must be an array', source);
-  const budgets = list.map((entry, i) => {
-    const at = `budgets[${i}]`;
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new ConfigError(`${at} must be an object`, source);
-    const e = entry;
-    for (const k of Object.keys(e)) {
-      if (k !== "route" && !BUDGET_METRICS.includes(k)) {
-        throw new ConfigError(`${at}: unknown key "${k}" (expected route, ${BUDGET_METRICS.join(", ")})`, source);
-      }
-    }
-    if (typeof e.route !== "string" || !(e.route === "**" || e.route.startsWith("/"))) {
-      throw new ConfigError(`${at}.route must be a route pattern starting with "/" (or "**")`, source);
-    }
-    const rule = { route: e.route };
-    for (const metric of BUDGET_METRICS) {
-      if (e[metric] === void 0) continue;
-      try {
-        rule[metric] = parseSize(e[metric]);
-      } catch (err) {
-        throw new ConfigError(`${at}.${metric}: ${err.message}`, source);
-      }
-    }
-    if (!BUDGET_METRICS.some((m) => rule[m] !== void 0)) {
-      throw new ConfigError(`${at} sets no limit (add ${BUDGET_METRICS.join(", ")})`, source);
-    }
-    return rule;
-  });
-  const config = { budgets };
-  if (source) config.source = source;
-  return config;
 }
-function loadConfig(file) {
-  let text;
+async function tryCommit(root, ref) {
   try {
-    text = fs2.readFileSync(file, "utf8");
-  } catch (e) {
-    throw new ConfigError(`cannot read config: ${e.code ?? String(e)}`, file);
+    return await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root);
+  } catch {
+    return void 0;
   }
-  return parseConfig(text, file);
 }
-function findConfig(dirs) {
-  for (const d of dirs) {
-    const f = path.join(d, CONFIG_FILE);
-    if (fs2.existsSync(f)) return f;
+async function resolveCommit(root, ref, onFetch) {
+  const local = await tryCommit(root, ref);
+  if (local) return local;
+  onFetch?.();
+  try {
+    await exec("git", ["fetch", "--no-tags", "--depth=1", "origin", ref], { cwd: root, echo: "quiet" });
+  } catch {
+    throw new GitError(`Can't find "${ref}" locally or on origin.`);
   }
-  return void 0;
+  return git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], root);
 }
-var escapeRe = (s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-function routePattern(pattern) {
-  if (pattern === "**") return /^.*$/;
-  let re = "";
-  for (const seg of pattern.split("/").slice(1)) {
-    re += seg === "**" ? "(?:/.*)?" : `/${seg.split("*").map(escapeRe).join("[^/]*")}`;
+async function addWorktree(root, dir, sha, echo = "quiet") {
+  await exec("git", ["worktree", "add", "--detach", dir, sha], { cwd: root, echo });
+}
+async function removeWorktree(root, dir) {
+  try {
+    await exec("git", ["worktree", "remove", "--force", dir], { cwd: root, echo: "quiet" });
+  } catch {
+    fs3.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    await exec("git", ["worktree", "prune"], { cwd: root, echo: "quiet" }).catch(() => void 0);
   }
-  return new RegExp(`^${re}$`);
+  return !fs3.existsSync(dir);
 }
-function matchesRoute(pattern, route) {
-  return routePattern(pattern).test(route);
+
+// ../cli/src/capture/install.ts
+import fs4 from "fs";
+import path from "path";
+var LOCKFILES = [
+  { file: "pnpm-lock.yaml", command: () => "pnpm install --frozen-lockfile" },
+  { file: "bun.lock", command: () => "bun install --frozen-lockfile" },
+  { file: "bun.lockb", command: () => "bun install --frozen-lockfile" },
+  {
+    file: "yarn.lock",
+    // Yarn Berry (has .yarnrc.yml) uses --immutable; Yarn classic uses --frozen-lockfile.
+    command: (dir) => fs4.existsSync(path.join(dir, ".yarnrc.yml")) ? "yarn install --immutable" : "yarn install --frozen-lockfile"
+  },
+  { file: "package-lock.json", command: () => "npm ci" }
+];
+function detectInstall(start, stop) {
+  const root = path.resolve(stop);
+  let dir = path.resolve(start);
+  for (; ; ) {
+    for (const l of LOCKFILES) {
+      if (fs4.existsSync(path.join(dir, l.file))) return { dir, command: l.command(dir), lockfile: l.file };
+    }
+    const parent = path.dirname(dir);
+    if (dir === root || parent === dir || !dir.startsWith(root)) return void 0;
+    dir = parent;
+  }
+}
+
+// ../cli/src/capture/snapshot.ts
+import fs5 from "fs";
+import path2 from "path";
+var MIN_NEXT = [16, 4];
+var SnapshotError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SnapshotError";
+  }
+};
+function findNextPackageJson(appDir) {
+  let dir = path2.resolve(appDir);
+  for (; ; ) {
+    const candidate = path2.join(dir, "node_modules", "next", "package.json");
+    if (fs5.existsSync(candidate)) return fs5.realpathSync(candidate);
+    const parent = path2.dirname(dir);
+    if (parent === dir) return void 0;
+    dir = parent;
+  }
+}
+function resolveNext(appDir) {
+  const pkgJson = findNextPackageJson(appDir);
+  if (!pkgJson) {
+    throw new SnapshotError(
+      `Can't find the "next" package from ${appDir}. Run this inside a Next.js app with dependencies installed.`
+    );
+  }
+  const { version } = JSON.parse(fs5.readFileSync(pkgJson, "utf8"));
+  const [major = 0, minor = 0] = version.split(".").map((n) => Number.parseInt(n, 10));
+  if (major < MIN_NEXT[0] || major === MIN_NEXT[0] && minor < MIN_NEXT[1]) {
+    throw new SnapshotError(`Next.js ${version} found in ${appDir}; Bundle Mop needs ${MIN_NEXT.join(".")} or newer (for \`next analyze export\`).`);
+  }
+  return { bin: path2.join(path2.dirname(pkgJson), "dist", "bin", "next"), version };
+}
+async function captureSnapshot(appDir, name, outFile, echo = "inherit") {
+  const { bin, version } = resolveNext(appDir);
+  const env = { ...process.env, NEXT_TELEMETRY_DISABLED: "1" };
+  await exec(process.execPath, [bin, "analyze", "--output", "--snapshot", name], { cwd: appDir, env, echo });
+  await exec(process.execPath, [bin, "analyze", "export", "--snapshot", name], { cwd: appDir, env, echo, stdoutFile: outFile });
+  if (!fs5.statSync(outFile).size) throw new SnapshotError(`\`next analyze export\` wrote nothing for snapshot "${name}" in ${appDir}.`);
+  return { nextVersion: version };
+}
+
+// ../cli/src/capture/base.ts
+async function captureBase(o) {
+  const echo = o.echo ?? "inherit";
+  const worktree = path3.join(o.tmpDir, "base");
+  await addWorktree(o.gitRoot, worktree, o.sha);
+  try {
+    const baseApp = path3.join(worktree, o.relApp);
+    if (!fs6.existsSync(path3.join(baseApp, "package.json"))) {
+      throw new SnapshotError(`${o.relApp || "."} has no package.json at ${o.sha.slice(0, 7)}; nothing to compare against.`);
+    }
+    const detected = detectInstall(baseApp, worktree);
+    const dir = detected?.dir ?? worktree;
+    const command = o.installCommand ?? detected?.command;
+    if (!command) throw new SnapshotError("No lockfile found for the base commit. Pass an install command.");
+    o.onInstall?.(command, path3.relative(worktree, dir) || ".");
+    await exec(command, [], { cwd: dir, shell: true, echo });
+    o.onAnalyze?.();
+    return await captureSnapshot(baseApp, "bundle-mop-base", o.outFile, echo);
+  } finally {
+    if (!await removeWorktree(o.gitRoot, worktree)) o.onCleanupFailed?.(worktree);
+  }
 }
 
 // ../cli/src/budgets/check.ts
-import path2 from "path";
+import path5 from "path";
 
 // ../cli/src/model/chains.ts
 var RouteGraph = class {
@@ -553,6 +663,99 @@ function formatBytes(n) {
 }
 var formatDelta = (n) => n > 0 ? `+${formatBytes(n)}` : n === 0 ? "\xB10 B" : formatBytes(n);
 
+// ../cli/src/budgets/config.ts
+import fs7 from "fs";
+import path4 from "path";
+var CONFIG_FILE = "bundle-mop.config.json";
+var BUDGET_METRICS = ["firstLoad", "lazy", "client"];
+var ConfigError = class extends Error {
+  constructor(message, source) {
+    super(source ? `${source}: ${message}` : message);
+    this.name = "ConfigError";
+  }
+};
+var UNITS = { b: 1, kb: 1e3, kib: 1024, mb: 1e6, mib: 1048576 };
+function parseSize(value2) {
+  if (typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0) return Math.round(value2);
+  if (typeof value2 === "string") {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib)?\s*$/i.exec(value2);
+    if (m) return Math.round(Number(m[1]) * UNITS[(m[2] ?? "b").toLowerCase()]);
+  }
+  throw new Error(`invalid size ${JSON.stringify(value2)} (use e.g. "150 kB", "1.5 MB" or a number of bytes)`);
+}
+function parseConfig(text, source) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    throw new ConfigError(`invalid JSON: ${e.message}`, source);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ConfigError("must be a JSON object", source);
+  const obj2 = raw;
+  for (const k of Object.keys(obj2)) {
+    if (k !== "budgets" && k !== "$schema") throw new ConfigError(`unknown key "${k}" (expected "budgets")`, source);
+  }
+  const list = obj2.budgets ?? [];
+  if (!Array.isArray(list)) throw new ConfigError('"budgets" must be an array', source);
+  const budgets = list.map((entry, i) => {
+    const at = `budgets[${i}]`;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new ConfigError(`${at} must be an object`, source);
+    const e = entry;
+    for (const k of Object.keys(e)) {
+      if (k !== "route" && !BUDGET_METRICS.includes(k)) {
+        throw new ConfigError(`${at}: unknown key "${k}" (expected route, ${BUDGET_METRICS.join(", ")})`, source);
+      }
+    }
+    if (typeof e.route !== "string" || !(e.route === "**" || e.route.startsWith("/"))) {
+      throw new ConfigError(`${at}.route must be a route pattern starting with "/" (or "**")`, source);
+    }
+    const rule = { route: e.route };
+    for (const metric of BUDGET_METRICS) {
+      if (e[metric] === void 0) continue;
+      try {
+        rule[metric] = parseSize(e[metric]);
+      } catch (err) {
+        throw new ConfigError(`${at}.${metric}: ${err.message}`, source);
+      }
+    }
+    if (!BUDGET_METRICS.some((m) => rule[m] !== void 0)) {
+      throw new ConfigError(`${at} sets no limit (add ${BUDGET_METRICS.join(", ")})`, source);
+    }
+    return rule;
+  });
+  const config = { budgets };
+  if (source) config.source = source;
+  return config;
+}
+function loadConfig(file) {
+  let text;
+  try {
+    text = fs7.readFileSync(file, "utf8");
+  } catch (e) {
+    throw new ConfigError(`cannot read config: ${e.code ?? String(e)}`, file);
+  }
+  return parseConfig(text, file);
+}
+function findConfig(dirs) {
+  for (const d of dirs) {
+    const f = path4.join(d, CONFIG_FILE);
+    if (fs7.existsSync(f)) return f;
+  }
+  return void 0;
+}
+var escapeRe = (s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+function routePattern(pattern) {
+  if (pattern === "**") return /^.*$/;
+  let re = "";
+  for (const seg of pattern.split("/").slice(1)) {
+    re += seg === "**" ? "(?:/.*)?" : `/${seg.split("*").map(escapeRe).join("[^/]*")}`;
+  }
+  return new RegExp(`^${re}$`);
+}
+function matchesRoute(pattern, route) {
+  return routePattern(pattern).test(route);
+}
+
 // ../cli/src/budgets/check.ts
 var METRIC_LABEL = { firstLoad: "first-load JS", lazy: "lazy JS", client: "total client JS" };
 var STATUS_ORDER = { over: 0, "still-over": 1, fixed: 2, ok: 3 };
@@ -606,8 +809,8 @@ function checkBudgets(diff, config, options = {}) {
   return { results, findings };
 }
 var shortPath = (p) => {
-  const rel = path2.relative(process.cwd(), path2.resolve(p));
-  return (rel && !rel.startsWith("..") && !path2.isAbsolute(rel) ? rel : p).replace(/\\/g, "/");
+  const rel = path5.relative(process.cwd(), path5.resolve(p));
+  return (rel && !rel.startsWith("..") && !path5.isAbsolute(rel) ? rel : p).replace(/\\/g, "/");
 };
 
 // ../cli/src/model/sizes.ts
@@ -754,7 +957,7 @@ function diffSnapshots(base, pr, options = {}) {
 }
 
 // ../cli/src/rules/rules.ts
-import path3 from "path";
+import path6 from "path";
 
 // ../cli/src/rules/catalog.ts
 var HEAVY_PACKAGES = [
@@ -853,13 +1056,13 @@ function packageVersions(route) {
   return out;
 }
 var componentName = (key) => {
-  const base = path3.posix.basename(shortKey(key)).replace(/\.[jt]sx?$/, "");
-  const name = base === "index" ? path3.posix.basename(path3.posix.dirname(shortKey(key))) : base;
+  const base = path6.posix.basename(shortKey(key)).replace(/\.[jt]sx?$/, "");
+  const name = base === "index" ? path6.posix.basename(path6.posix.dirname(shortKey(key))) : base;
   const pascal = name.replace(/(^|[-_.\s]+)(\w)/g, (_, __, c) => c.toUpperCase());
   return /^[A-Za-z_$]/.test(pascal) ? pascal : `Lazy${pascal}`;
 };
 var importPath = (fromKey, toKey) => {
-  let rel = path3.posix.relative(path3.posix.dirname(shortKey(fromKey)), shortKey(toKey)).replace(/\.[jt]sx?$/, "");
+  let rel = path6.posix.relative(path6.posix.dirname(shortKey(fromKey)), shortKey(toKey)).replace(/\.[jt]sx?$/, "");
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
 };
@@ -1340,6 +1543,42 @@ function renderMarkdown(diff, options = {}) {
 `;
 }
 
+// ../cli/src/commands/shared.ts
+var REPORT_USAGE = `  --format <text|markdown|json>  Output format (default text). markdown = PR comment
+  --json                       Same as --format json
+  --top <n>                    Changed modules listed per route (default 10)
+  --min-bytes <n>              Noise floor: smaller changes are hidden and never flagged (default 1000)
+  --config <file>              Budgets file (default: bundle-mop.config.json if it exists)
+  --fail-on <level>            Exit 1 on a finding at or above: none, info, warning, error
+                               (default error: only exceeded budgets produce errors)`;
+
+// ../cli/src/commands/compare.ts
+var COMPARE_USAGE = `Usage: bundle-mop compare [options]
+
+Compares your working tree (uncommitted changes included) with the base branch, like a pull request
+would. Run it inside a Next.js 16.4+ app. Your files are not touched; the base is analyzed in a
+temporary git worktree and its result is cached by commit.
+
+  --base <ref>                 Branch or commit to compare against (default: the remote's default
+                               branch, else main or master). Compared from the merge base.
+  --dir <path>                 The Next.js app (default: current directory)
+  --install-command <cmd>      Install command for the base checkout (default: from the lockfile)
+  --no-cache                   Re-analyze the base even if a cached result exists
+  --verbose                    Show install and next analyze output
+${REPORT_USAGE}`;
+
+// ../cli/src/commands/diff.ts
+import fs9 from "fs";
+import { parseArgs as parseArgs2 } from "util";
+import zlib from "zlib";
+var DIFF_USAGE = `Usage: bundle-mop diff <base-export> <pr-export> [options]
+
+Diffs two saved \`next analyze export\` files. To compare your branch with main in one step, use
+\`bundle-mop compare\`.
+
+  <base-export>, <pr-export>   Output of \`next analyze export\` (.jsonl or .jsonl.gz)
+${REPORT_USAGE}`;
+
 // ../cli/src/index.ts
 var VERSION = "0.1.1";
 var HELP = `bundle-mop v${VERSION}
@@ -1348,53 +1587,16 @@ Explains every PR's Next.js bundle change: which import, through which chain,
 and how to fix it.
 
 Usage:
+  bundle-mop compare [--base <branch>] [options]
+                          Compare your branch with main, in one step. Run it inside a
+                          Next.js 16.4+ app. \`bundle-mop compare --help\` for options.
   bundle-mop diff <base-export> <pr-export> [options]
-                          Diff two \`next analyze export\` files (.jsonl / .jsonl.gz),
-                          check budgets and suggest fixes. \`bundle-mop diff --help\` for options.
+                          Diff two saved \`next analyze export\` files.
   bundle-mop --help       Show this help
   bundle-mop --version    Show version
 
 Docs: https://github.com/yosuva-rv/bundle-mop
 `;
-
-// src/exec.ts
-import { spawn } from "child_process";
-import fs4 from "fs";
-var ExecError = class extends Error {
-  constructor(command, exitCode) {
-    super(`\`${command}\` failed with exit code ${exitCode}`);
-    this.command = command;
-    this.exitCode = exitCode;
-    this.name = "ExecError";
-  }
-  command;
-  exitCode;
-};
-function exec(command, args, opts) {
-  const display = [command, ...args].join(" ");
-  return new Promise((resolve, reject) => {
-    const out = opts.stdoutFile ? fs4.openSync(opts.stdoutFile, "w") : void 0;
-    const child = spawn(command, args, {
-      cwd: opts.cwd,
-      shell: opts.shell ?? false,
-      env: opts.env ?? process.env,
-      stdio: ["ignore", out ?? (opts.capture ? "pipe" : "inherit"), "inherit"]
-    });
-    let captured = "";
-    child.stdout?.on("data", (d) => {
-      captured += d.toString("utf8");
-    });
-    child.on("error", (e) => {
-      if (out !== void 0) fs4.closeSync(out);
-      reject(e);
-    });
-    child.on("close", (code2) => {
-      if (out !== void 0) fs4.closeSync(out);
-      if (code2 === 0) resolve(captured);
-      else reject(new ExecError(display, code2));
-    });
-  });
-}
 
 // src/github.ts
 var GitHubApiError = class extends Error {
@@ -1416,7 +1618,7 @@ var GitHubClient = class {
   repo;
   apiUrl;
   fetchImpl;
-  async request(method, path7, body) {
+  async request(method, path9, body) {
     const init = {
       method,
       headers: {
@@ -1428,14 +1630,14 @@ var GitHubClient = class {
       }
     };
     if (body !== void 0) init.body = JSON.stringify(body);
-    const res = await this.fetchImpl(`${this.apiUrl}${path7}`, init);
+    const res = await this.fetchImpl(`${this.apiUrl}${path9}`, init);
     if (!res.ok) {
       let detail = "";
       try {
         detail = (await res.json()).message ?? "";
       } catch {
       }
-      throw new GitHubApiError(res.status, `GitHub API ${method} ${path7} failed: ${res.status}${detail ? ` ${detail}` : ""}`);
+      throw new GitHubApiError(res.status, `GitHub API ${method} ${path9} failed: ${res.status}${detail ? ` ${detail}` : ""}`);
     }
     return await res.json();
   }
@@ -1481,143 +1683,58 @@ function failureFor(findings, failOn) {
   return `${hits.length} finding${hits.length === 1 ? "" : "s"} at or above "${failOn}" (fail-on): ${hits.map((f) => f.title).join("; ")}`;
 }
 
-// src/package-manager.ts
-import fs5 from "fs";
-import path4 from "path";
-var LOCKFILES = [
-  { file: "pnpm-lock.yaml", command: () => "pnpm install --frozen-lockfile" },
-  { file: "bun.lock", command: () => "bun install --frozen-lockfile" },
-  { file: "bun.lockb", command: () => "bun install --frozen-lockfile" },
-  {
-    file: "yarn.lock",
-    // Yarn Berry (has .yarnrc.yml) uses --immutable; Yarn classic uses --frozen-lockfile.
-    command: (dir) => fs5.existsSync(path4.join(dir, ".yarnrc.yml")) ? "yarn install --immutable" : "yarn install --frozen-lockfile"
-  },
-  { file: "package-lock.json", command: () => "npm ci" }
-];
-function detectInstall(start, stop) {
-  const root = path4.resolve(stop);
-  let dir = path4.resolve(start);
-  for (; ; ) {
-    for (const l of LOCKFILES) {
-      if (fs5.existsSync(path4.join(dir, l.file))) return { dir, command: l.command(dir), lockfile: l.file };
-    }
-    const parent = path4.dirname(dir);
-    if (dir === root || parent === dir || !dir.startsWith(root)) return void 0;
-    dir = parent;
-  }
-}
-
-// src/snapshot.ts
-import fs6 from "fs";
-import { createRequire } from "module";
-import path5 from "path";
-var MIN_NEXT = [16, 4];
-var SnapshotError = class extends Error {
-};
-function resolveNext(appDir) {
-  let pkgJson;
-  try {
-    pkgJson = createRequire(path5.join(appDir, "package.json")).resolve("next/package.json");
-  } catch {
-    throw new SnapshotError(`Can't find the "next" package from ${appDir}. Install dependencies before this step, and check working-directory.`);
-  }
-  const { version } = JSON.parse(fs6.readFileSync(pkgJson, "utf8"));
-  const [major = 0, minor = 0] = version.split(".").map((n) => Number.parseInt(n, 10));
-  if (major < MIN_NEXT[0] || major === MIN_NEXT[0] && minor < MIN_NEXT[1]) {
-    throw new SnapshotError(`Next.js ${version} found in ${appDir}; Bundle Mop needs ${MIN_NEXT.join(".")} or newer (for \`next analyze export\`).`);
-  }
-  return { bin: path5.join(path5.dirname(pkgJson), "dist", "bin", "next"), version };
-}
-async function captureSnapshot(appDir, name, outFile) {
-  const { bin, version } = resolveNext(appDir);
-  const env = { ...process.env, NEXT_TELEMETRY_DISABLED: "1" };
-  await exec(process.execPath, [bin, "analyze", "--output", "--snapshot", name], { cwd: appDir, env });
-  await exec(process.execPath, [bin, "analyze", "export", "--snapshot", name], { cwd: appDir, env, stdoutFile: outFile });
-  if (!fs6.statSync(outFile).size) throw new SnapshotError(`\`next analyze export\` wrote nothing for snapshot "${name}" in ${appDir}.`);
-  return { nextVersion: version };
-}
-
 // src/run.ts
 function readEvent(file) {
-  if (!file || !fs7.existsSync(file)) return void 0;
-  return JSON.parse(fs7.readFileSync(file, "utf8"));
-}
-var git = (args, cwd) => exec("git", args, { cwd, capture: true }).then((s) => s.trim());
-async function resolveCommit(gitRoot, ref) {
-  try {
-    return await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], gitRoot);
-  } catch {
-    log.info(`Fetching ${ref} from origin`);
-    await exec("git", ["fetch", "--no-tags", "--depth=1", "origin", ref], { cwd: gitRoot });
-    return git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], gitRoot);
-  }
-}
-async function captureBase(gitRoot, relApp, baseSha, tmp, installCommand, outFile) {
-  const worktree = path6.join(tmp, "base");
-  await exec("git", ["worktree", "add", "--detach", worktree, baseSha], { cwd: gitRoot });
-  try {
-    const baseApp = path6.join(worktree, relApp);
-    if (!fs7.existsSync(path6.join(baseApp, "package.json"))) {
-      throw new SnapshotError(`${relApp || "."} has no package.json in the base commit ${baseSha.slice(0, 7)}; nothing to compare against.`);
-    }
-    const detected = detectInstall(baseApp, worktree);
-    const dir = detected?.dir ?? worktree;
-    const command = installCommand ?? detected?.command;
-    if (!command) throw new SnapshotError("No lockfile found for the base checkout. Set the install-command input.");
-    log.info(`Installing base dependencies: ${command} (in ${path6.relative(worktree, dir) || "."})`);
-    await exec(command, [], { cwd: dir, shell: true });
-    await captureSnapshot(baseApp, "base", outFile);
-  } finally {
-    await removeWorktree(gitRoot, worktree);
-  }
-}
-async function removeWorktree(gitRoot, worktree) {
-  try {
-    await exec("git", ["worktree", "remove", "--force", worktree], { cwd: gitRoot });
-  } catch {
-    fs7.rmSync(worktree, { recursive: true, force: true, maxRetries: 3 });
-    await exec("git", ["worktree", "prune"], { cwd: gitRoot }).catch(() => void 0);
-  }
-  if (fs7.existsSync(worktree)) log.warning(`Could not remove worktree ${worktree}`);
+  if (!file || !fs10.existsSync(file)) return void 0;
+  return JSON.parse(fs10.readFileSync(file, "utf8"));
 }
 async function runAction(env = process.env) {
   const inputs = readInputs(env);
   const workspace = env.GITHUB_WORKSPACE || process.cwd();
-  const tmp = fs7.mkdtempSync(path6.join(env.RUNNER_TEMP || os.tmpdir(), "bundle-mop-"));
+  const tmp = fs10.mkdtempSync(path8.join(env.RUNNER_TEMP || os2.tmpdir(), "bundle-mop-"));
   const event = readEvent(env.GITHUB_EVENT_PATH);
   const pr = event?.pull_request;
-  const gitRoot = path6.resolve(await git(["rev-parse", "--show-toplevel"], workspace));
-  const appDir = path6.resolve(workspace, inputs.workingDirectory);
-  const relApp = path6.relative(gitRoot, appDir);
-  if (relApp.startsWith("..") || path6.isAbsolute(relApp)) throw new InputError(`working-directory ${appDir} is outside the repository ${gitRoot}`);
+  const gitRoot2 = path8.resolve(await gitRoot(workspace));
+  const appDir = path8.resolve(workspace, inputs.workingDirectory);
+  const relApp = path8.relative(gitRoot2, appDir);
+  if (relApp.startsWith("..") || path8.isAbsolute(relApp)) throw new InputError(`working-directory ${appDir} is outside the repository ${gitRoot2}`);
   const baseRef = inputs.baseRef ?? pr?.base?.sha;
   if (!baseRef) throw new InputError("Nothing to compare against: run on a pull_request event or set the base-ref input.");
-  const prFile = path6.join(tmp, "pr.jsonl");
-  const baseFile = path6.join(tmp, "base.jsonl");
+  const prFile = path8.join(tmp, "pr.jsonl");
+  const baseFile = path8.join(tmp, "base.jsonl");
   log.group("Bundle Mop: analyze this commit");
-  const { nextVersion } = await captureSnapshot(appDir, "pr", prFile);
+  const { nextVersion } = await captureSnapshot(appDir, "bundle-mop-head", prFile, "inherit");
   log.endGroup();
   log.group(`Bundle Mop: analyze base (${baseRef})`);
-  const baseSha = await resolveCommit(gitRoot, baseRef);
-  await captureBase(gitRoot, relApp, baseSha, tmp, inputs.installCommand, baseFile);
+  const baseSha = await resolveCommit(gitRoot2, baseRef, () => log.info(`Fetching ${baseRef} from origin`));
+  await captureBase({
+    gitRoot: gitRoot2,
+    relApp,
+    sha: baseSha,
+    tmpDir: tmp,
+    outFile: baseFile,
+    echo: "inherit",
+    ...inputs.installCommand ? { installCommand: inputs.installCommand } : {},
+    onInstall: (command, where) => log.info(`Installing base dependencies: ${command} (in ${where})`),
+    onCleanupFailed: (dir) => log.warning(`Could not remove worktree ${dir}`)
+  });
   log.endGroup();
-  const configFile = inputs.config ? path6.resolve(gitRoot, inputs.config) : findConfig([appDir, gitRoot]);
+  const configFile = inputs.config ? path8.resolve(gitRoot2, inputs.config) : findConfig([appDir, gitRoot2]);
   let config;
   if (configFile) {
     config = loadConfig(configFile);
-    const rel = path6.relative(gitRoot, configFile);
-    config.source = rel && !rel.startsWith("..") && !path6.isAbsolute(rel) ? rel.replace(/\\/g, "/") : configFile;
+    const rel = path8.relative(gitRoot2, configFile);
+    config.source = rel && !rel.startsWith("..") && !path8.isAbsolute(rel) ? rel.replace(/\\/g, "/") : configFile;
     log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? "y" : "ies"})`);
   }
-  const base = parseNextAnalyzeExport(fs7.readFileSync(baseFile, "utf8"));
-  const head = parseNextAnalyzeExport(fs7.readFileSync(prFile, "utf8"));
+  const base = parseNextAnalyzeExport(fs10.readFileSync(baseFile, "utf8"));
+  const head = parseNextAnalyzeExport(fs10.readFileSync(prFile, "utf8"));
   const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...config ? { config } : {} });
   const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
-  const reportPath = path6.join(tmp, "bundle-mop.md");
-  const jsonPath = path6.join(tmp, "bundle-mop.json");
-  fs7.writeFileSync(reportPath, markdown);
-  fs7.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, budgets, findings }, null, 2));
+  const reportPath = path8.join(tmp, "bundle-mop.md");
+  const jsonPath = path8.join(tmp, "bundle-mop.json");
+  fs10.writeFileSync(reportPath, markdown);
+  fs10.writeFileSync(jsonPath, JSON.stringify({ baseSha, nextVersion, ...diff, budgets, findings }, null, 2));
   appendSummary(markdown, env);
   const outcome = summarize(diff, inputs.minBytes);
   const budgetsExceeded = budgets.filter((b) => b.status === "over").length;

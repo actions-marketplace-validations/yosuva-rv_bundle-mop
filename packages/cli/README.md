@@ -11,15 +11,12 @@ JS changes, traces the import chain behind each regression, checks per-route bud
 deterministic rules engine. No AI and no network calls.
 
 ```sh
-npm i -D bundle-mop
+# inside your Next.js app, on your branch: compares with main, like a pull request
+npx bundle-mop compare
+npx bundle-mop compare --base develop --format markdown
 
-# on the base branch and on your branch:
-next analyze --output --snapshot base && next analyze export --snapshot base > base.jsonl
-next analyze --output --snapshot pr   && next analyze export --snapshot pr   > pr.jsonl
-
-npx bundle-mop diff base.jsonl pr.jsonl                    # text summary
-npx bundle-mop diff base.jsonl pr.jsonl --format markdown  # PR comment
-npx bundle-mop diff base.jsonl pr.jsonl --format json      # full diff, budgets and findings
+# or diff two saved `next analyze export` files
+npx bundle-mop diff base.jsonl pr.jsonl --format json
 ```
 
 ```

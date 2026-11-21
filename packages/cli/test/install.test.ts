@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { detectInstall } from '../src/package-manager.js';
+import { detectInstall } from '../src/capture/install.js';
 
 function repo(files: string[]): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bm-pm-'));
