@@ -1,14 +1,22 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { analyze, COMMENT_MARKER, findConfig, loadConfig, parseNextAnalyzeExport, renderMarkdown } from 'bundle-mop';
+import {
+  analyze,
+  captureBase,
+  captureSnapshot,
+  COMMENT_MARKER,
+  findConfig,
+  gitRoot as findGitRoot,
+  loadConfig,
+  parseNextAnalyzeExport,
+  renderMarkdown,
+  resolveCommit,
+} from 'bundle-mop';
 import type { BudgetConfig, Finding } from 'bundle-mop';
-import { exec } from './exec.js';
 import { GitHubApiError, GitHubClient } from './github.js';
 import { appendSummary, InputError, log, readInputs, setOutput } from './inputs.js';
 import { failureFor, summarize } from './outcome.js';
-import { detectInstall } from './package-manager.js';
-import { captureSnapshot, SnapshotError } from './snapshot.js';
 
 export interface ActionResult {
   reportPath: string;
@@ -31,49 +39,6 @@ function readEvent(file: string | undefined): PullRequestEvent | undefined {
   return JSON.parse(fs.readFileSync(file, 'utf8')) as PullRequestEvent;
 }
 
-const git = (args: string[], cwd: string) => exec('git', args, { cwd, capture: true }).then((s) => s.trim());
-
-/** Resolves `ref` to a commit, fetching it from origin when the checkout is shallow. */
-async function resolveCommit(gitRoot: string, ref: string): Promise<string> {
-  try {
-    return await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], gitRoot);
-  } catch {
-    log.info(`Fetching ${ref} from origin`);
-    await exec('git', ['fetch', '--no-tags', '--depth=1', 'origin', ref], { cwd: gitRoot });
-    return git(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], gitRoot);
-  }
-}
-
-async function captureBase(gitRoot: string, relApp: string, baseSha: string, tmp: string, installCommand: string | undefined, outFile: string) {
-  const worktree = path.join(tmp, 'base');
-  await exec('git', ['worktree', 'add', '--detach', worktree, baseSha], { cwd: gitRoot });
-  try {
-    const baseApp = path.join(worktree, relApp);
-    if (!fs.existsSync(path.join(baseApp, 'package.json'))) {
-      throw new SnapshotError(`${relApp || '.'} has no package.json in the base commit ${baseSha.slice(0, 7)}; nothing to compare against.`);
-    }
-    const detected = detectInstall(baseApp, worktree);
-    const dir = detected?.dir ?? worktree;
-    const command = installCommand ?? detected?.command;
-    if (!command) throw new SnapshotError('No lockfile found for the base checkout. Set the install-command input.');
-    log.info(`Installing base dependencies: ${command} (in ${path.relative(worktree, dir) || '.'})`);
-    await exec(command, [], { cwd: dir, shell: true });
-    await captureSnapshot(baseApp, 'base', outFile);
-  } finally {
-    await removeWorktree(gitRoot, worktree);
-  }
-}
-
-/** `git worktree remove` can fail on Windows (deep node_modules paths exceed MAX_PATH); fall back to fs + prune. */
-async function removeWorktree(gitRoot: string, worktree: string) {
-  try {
-    await exec('git', ['worktree', 'remove', '--force', worktree], { cwd: gitRoot });
-  } catch {
-    fs.rmSync(worktree, { recursive: true, force: true, maxRetries: 3 });
-    await exec('git', ['worktree', 'prune'], { cwd: gitRoot }).catch(() => undefined);
-  }
-  if (fs.existsSync(worktree)) log.warning(`Could not remove worktree ${worktree}`);
-}
 
 export async function runAction(env: NodeJS.ProcessEnv = process.env): Promise<ActionResult> {
   const inputs = readInputs(env);
@@ -82,7 +47,7 @@ export async function runAction(env: NodeJS.ProcessEnv = process.env): Promise<A
   const event = readEvent(env.GITHUB_EVENT_PATH);
   const pr = event?.pull_request;
 
-  const gitRoot = path.resolve(await git(['rev-parse', '--show-toplevel'], workspace));
+  const gitRoot = path.resolve(await findGitRoot(workspace));
   const appDir = path.resolve(workspace, inputs.workingDirectory);
   const relApp = path.relative(gitRoot, appDir);
   if (relApp.startsWith('..') || path.isAbsolute(relApp)) throw new InputError(`working-directory ${appDir} is outside the repository ${gitRoot}`);
@@ -94,12 +59,22 @@ export async function runAction(env: NodeJS.ProcessEnv = process.env): Promise<A
   const baseFile = path.join(tmp, 'base.jsonl');
 
   log.group('Bundle Mop: analyze this commit');
-  const { nextVersion } = await captureSnapshot(appDir, 'pr', prFile);
+  const { nextVersion } = await captureSnapshot(appDir, 'bundle-mop-head', prFile, 'inherit');
   log.endGroup();
 
   log.group(`Bundle Mop: analyze base (${baseRef})`);
-  const baseSha = await resolveCommit(gitRoot, baseRef);
-  await captureBase(gitRoot, relApp, baseSha, tmp, inputs.installCommand, baseFile);
+  const baseSha = await resolveCommit(gitRoot, baseRef, () => log.info(`Fetching ${baseRef} from origin`));
+  await captureBase({
+    gitRoot,
+    relApp,
+    sha: baseSha,
+    tmpDir: tmp,
+    outFile: baseFile,
+    echo: 'inherit',
+    ...(inputs.installCommand ? { installCommand: inputs.installCommand } : {}),
+    onInstall: (command, where) => log.info(`Installing base dependencies: ${command} (in ${where})`),
+    onCleanupFailed: (dir) => log.warning(`Could not remove worktree ${dir}`),
+  });
   log.endGroup();
 
   // Budgets come from the PR's checkout (JSON only, so nothing executes).

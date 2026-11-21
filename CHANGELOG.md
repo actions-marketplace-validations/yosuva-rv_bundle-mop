@@ -5,6 +5,14 @@ are versioned together. Until 1.0, minor versions may change output formats and 
 
 ## Unreleased
 
+- **New: `bundle-mop compare`.** One command, run inside your Next.js app, compares your branch (uncommitted changes
+  included) with `main` from the merge base, like a pull request. The base is analyzed in a temporary git worktree
+  with its own lockfile and cached by commit in `node_modules/.cache/bundle-mop`, so repeat runs take seconds.
+  Options: `--base`, `--dir`, `--install-command`, `--no-cache`, `--verbose`, plus all report options. Progress goes
+  to stderr, so `--format json > out.json` stays clean.
+- Reports always print to stdout, even when a budget fails the run (exit code 1); only errors go to stderr.
+- Next.js is now looked up only in the app's own `node_modules` folders, never through `NODE_PATH` (which pnpm sets).
+- The GitHub Action and the CLI share one implementation for checking out, installing and analyzing the base.
 - Docs: a simpler README with a logo, a screenshot of a real PR comment, a one-file quick start and an FAQ;
   developer notes moved to CONTRIBUTING.md. The npm page shows the logo and screenshot too.
 

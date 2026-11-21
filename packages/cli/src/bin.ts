@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { run } from './index.js';
+import { main } from './index.js';
 
-const { code, output } = run(process.argv.slice(2));
-(code === 0 ? console.log : console.error)(output);
+const { code, output, error } = await main(process.argv.slice(2));
+// Reports always go to stdout (so `--format json > out.json` works even when a budget fails);
+// error and usage messages go to stderr.
+(error ? console.error : console.log)(output);
 process.exitCode = code;
