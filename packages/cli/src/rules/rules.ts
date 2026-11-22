@@ -11,9 +11,26 @@ import type { Rule, RuleContext, RouteFinding } from './types.js';
 
 const grewFirstLoad = (c: ContributionDiff, min: number) => c.firstLoad.delta >= min;
 
-/** Package rollups that grew on this route's first-load by at least `minBytes`. */
+/** Source keys of a package's browser JS on a route. */
+const packageKeys = (route: RouteData | undefined, name: string) =>
+  new Set(route?.parts.filter((p) => p.isClient && p.source.packageName === name).map((p) => p.source.key));
+
+/**
+ * Only re-minified by a new Next.js compiler: same version, same files, different bytes.
+ * Seen on shadcn/ui's Next 16.4.2 → 16.4.5 PR, where @base-ui/react "grew" 2 kB without changing.
+ */
+function isCompilerDrift(ctx: RuleContext, p: ContributionDiff): boolean {
+  if (!ctx.compilerChanged || p.status !== 'changed' || p.versions || !p.packageName) return false;
+  const before = packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName);
+  const after = packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName);
+  return before.size === after.size && [...after].every((k) => before.has(k));
+}
+
+/** Package rollups that grew on this route's first-load by at least `minBytes` (not counting compiler drift). */
 const grownPackages = (ctx: RuleContext) =>
-  ctx.route.packages.filter((p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes));
+  ctx.route.packages.filter(
+    (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p),
+  );
 
 const importedBy = (chain: ImportChain | undefined) => (chain?.importer ? ` Imported by ${shortKey(chain.importer)}.` : '');
 
@@ -112,7 +129,7 @@ export const lazyLoadCandidate: Rule = {
     const out: RouteFinding[] = [];
     for (const p of ctx.route.packages) {
       const chain = p.chain;
-      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes) continue;
+      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p)) continue;
       if (!chain?.clientBoundary || chain.viaDynamicImport || !chain.importer) continue;
 
       const steps = chain.steps;

@@ -3,6 +3,7 @@
 import { detectAppRoot, normalizePath, parseIdent } from './paths.js';
 import type {
   AnalyzeSnapshot,
+  AssetType,
   ChunkGroup,
   ChunkOutput,
   ChunkPart,
@@ -28,26 +29,27 @@ export interface ParseOptions {
 type Raw = Record<string, unknown>;
 
 // --- field readers ----------------------------------------------------------
-const str = (r: Raw, k: string, line: number): string => {
+// `label` names where the field lives in errors (e.g. `route.entries[0]`); defaults to the record type.
+const str = (r: Raw, k: string, line: number, label = String(r.type)): string => {
   const v = r[k];
-  if (typeof v !== 'string') throw new AdapterError(`${String(r.type)}.${k} must be a string`, line);
+  if (typeof v !== 'string') throw new AdapterError(`${label}.${k} must be a string`, line);
   return v;
 };
-const num = (r: Raw, k: string, line: number): number => {
+const num = (r: Raw, k: string, line: number, label = String(r.type)): number => {
   const v = r[k];
-  if (typeof v !== 'number' || !Number.isFinite(v)) throw new AdapterError(`${String(r.type)}.${k} must be a number`, line);
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new AdapterError(`${label}.${k} must be a number`, line);
   return v;
 };
-const strArr = (r: Raw, k: string, line: number): string[] => {
+const strArr = (r: Raw, k: string, line: number, label = String(r.type)): string[] => {
   const v = r[k];
   if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) {
-    throw new AdapterError(`${String(r.type)}.${k} must be a string[]`, line);
+    throw new AdapterError(`${label}.${k} must be a string[]`, line);
   }
   return v;
 };
-const obj = (r: Raw, k: string, line: number): Raw => {
+const obj = (r: Raw, k: string, line: number, label = String(r.type)): Raw => {
   const v = r[k];
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new AdapterError(`${String(r.type)}.${k} must be an object`, line);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new AdapterError(`${label}.${k} must be an object`, line);
   return v as Raw;
 };
 
@@ -59,12 +61,20 @@ interface RawRoute {
   seen: boolean;
   entries: RouteEntry[];
   coverage: { entries: string; groups: string };
-  outputs: Omit<ChunkOutput, 'isClient' | 'isLazyOnly'>[];
+  outputs: Omit<ChunkOutput, 'isClient' | 'isLazyOnly' | 'assetType'>[];
   parts: RawPart[];
   groups: ChunkGroup[];
 }
 
-const isClientFile = (file: string) => file.startsWith('[client-fs]/');
+const FONT_EXT = /\.(woff2?|ttf|otf|eot)$/i;
+export function assetTypeOf(file: string): AssetType {
+  if (/\.(m?js|cjs)$/i.test(file)) return 'js';
+  if (/\.css$/i.test(file)) return 'css';
+  if (FONT_EXT.test(file)) return 'font';
+  return 'other';
+}
+/** Browser JavaScript only: CSS and fonts are client outputs too, but not JS. */
+const isClientJs = (file: string) => file.startsWith('[client-fs]/') && assetTypeOf(file) === 'js';
 
 /** Parses the full text of `next analyze export` output. */
 export function parseNextAnalyzeExport(text: string, options: ParseOptions = {}): AnalyzeSnapshot {
@@ -126,7 +136,7 @@ export function parseNextAnalyzeLines(lines: Iterable<string>, options: ParseOpt
       }
       case 'module': {
         const deps = obj(r, 'dependencies', lineNo);
-        const dep = (k: string) => (deps[k] === undefined ? [] : strArr(deps, k, lineNo));
+        const dep = (k: string) => (deps[k] === undefined ? [] : strArr(deps, k, lineNo, 'module.dependencies'));
         rawModules.push({ ident: str(r, 'ident', lineNo), path: str(r, 'path', lineNo), sync: dep('sync'), async: dep('async'), traced: dep('traced') });
         break;
       }
@@ -136,19 +146,22 @@ export function parseNextAnalyzeLines(lines: Iterable<string>, options: ParseOpt
         route.seen = true;
         const entries = r.entries;
         if (!Array.isArray(entries)) throw new AdapterError('route.entries must be an array', lineNo);
-        route.entries = entries.map((e) => {
-          if (typeof e !== 'object' || e === null) throw new AdapterError('route entry must be an object', lineNo);
+        route.entries = entries.map((e, i) => {
+          const at = `route.entries[${i}]`;
+          if (typeof e !== 'object' || e === null) throw new AdapterError(`${at} must be an object`, lineNo);
           const er = e as Raw;
           return {
-            id: str(er, 'route_entry_id', lineNo),
-            moduleIdent: str(er, 'module_ident', lineNo),
-            modulePath: str(er, 'module_path', lineNo),
-            role: str(er, 'role', lineNo),
-            entryKind: str(er, 'entry_kind', lineNo),
+            id: str(er, 'route_entry_id', lineNo, at),
+            moduleIdent: str(er, 'module_ident', lineNo, at),
+            modulePath: str(er, 'module_path', lineNo, at),
+            role: str(er, 'role', lineNo, at),
+            // Route handlers (app/**/route.ts) export a client bootstrap entry without entry_kind
+            // (seen on shadcn/ui, Next 16.4.2). Newer fields like client_references are ignored.
+            entryKind: er.entry_kind === undefined ? 'unknown' : str(er, 'entry_kind', lineNo, at),
           };
         });
         const cov = obj(r, 'coverage', lineNo);
-        route.coverage = { entries: str(cov, 'entries', lineNo), groups: str(cov, 'groups', lineNo) };
+        route.coverage = { entries: str(cov, 'entries', lineNo, 'route.coverage'), groups: str(cov, 'groups', lineNo, 'route.coverage') };
         break;
       }
       case 'output':
@@ -232,9 +245,15 @@ export function parseNextAnalyzeLines(lines: Iterable<string>, options: ParseOpt
       entries: r.entries,
       coverage: r.coverage,
       groups: r.groups,
-      outputs: r.outputs.map((o) => ({ ...o, isClient: isClientFile(o.file), isLazyOnly: lazy.has(o.file) })),
+      outputs: r.outputs.map((o) => ({ ...o, assetType: assetTypeOf(o.file), isClient: isClientJs(o.file), isLazyOnly: lazy.has(o.file) })),
       parts: r.parts.map(
-        (p): ChunkPart => ({ ...p, source: ref(p.sourcePath), isClient: isClientFile(p.file), isLazy: lazy.has(p.file) }),
+        (p): ChunkPart => ({
+          ...p,
+          source: ref(p.sourcePath),
+          assetType: assetTypeOf(p.file),
+          isClient: isClientJs(p.file),
+          isLazy: lazy.has(p.file),
+        }),
       ),
     });
   }

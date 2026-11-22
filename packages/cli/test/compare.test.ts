@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { exec, ExecError } from '../src/capture/exec.js';
 import { defaultBase, GitError, isDirty, mergeBase, resolveCommit, tryCommit } from '../src/capture/git.js';
-import { cacheDirFor, compareCommand } from '../src/commands/compare.js';
+import { cacheDirFor, compareCommand, readCache, writeCache } from '../src/commands/compare.js';
 import { renderReport } from '../src/commands/shared.js';
 import { main } from '../src/index.js';
 import { analyze } from '../src/pipeline.js';
@@ -134,6 +134,26 @@ describe('bundle-mop compare: errors a user can hit', { timeout: 30_000 }, () =>
 
   it('caches base analyses inside node_modules', () => {
     expect(cacheDirFor('/x/app')).toBe(path.join('/x/app', 'node_modules', '.cache', 'bundle-mop'));
+  });
+
+  it('writes the cache gzipped, reads it back, and still reads 0.2.0 uncompressed caches', () => {
+    const app = path.join(tmpRoot, 'cache-app');
+    const text = `${'{"type":"module"}\n'.repeat(5000)}`;
+    expect(readCache(app, 'abc')).toBeUndefined();
+    writeCache(app, 'abc', text);
+    const gz = path.join(cacheDirFor(app), 'abc.jsonl.gz');
+    expect(fs.existsSync(gz)).toBe(true);
+    expect(fs.statSync(gz).size).toBeLessThan(text.length / 10);
+    expect(readCache(app, 'abc')).toBe(text);
+    // legacy 0.2.0 file: read, then replaced by the gzipped one on the next write
+    fs.writeFileSync(path.join(cacheDirFor(app), 'old.jsonl'), 'legacy');
+    expect(readCache(app, 'old')).toBe('legacy');
+    writeCache(app, 'old', 'fresh');
+    expect(fs.existsSync(path.join(cacheDirFor(app), 'old.jsonl'))).toBe(false);
+    expect(readCache(app, 'old')).toBe('fresh');
+    // a corrupt gzip is a cache miss, not a crash
+    fs.writeFileSync(path.join(cacheDirFor(app), 'bad.jsonl.gz'), 'not gzip');
+    expect(readCache(app, 'bad')).toBeUndefined();
   });
 });
 

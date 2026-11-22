@@ -6,6 +6,7 @@ import { METRIC_LABEL } from '../budgets/check.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
 import type { Finding } from '../rules/types.js';
 import { formatBytes, formatDelta } from '../util/format.js';
+import { frameworkNote } from './notes.js';
 import { routeRows } from './rows.js';
 import type { ReportRow } from './rows.js';
 
@@ -70,7 +71,10 @@ function headline(diff: SnapshotDiff, shown: RouteDiff[], findings: Finding[], m
   const nSug = findings.length;
   const sug = nSug ? ` · ${nSug} suggestion${nSug === 1 ? '' : 's'}` : '';
   if (!shown.length) return `✅ No route's JS changed by ${formatBytes(min)} or more.${sug}`;
-  const worst = shown.reduce((a, b) => (Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a));
+  // Prefer the app's own routes: a Next upgrade can add internal ones like /_global-error, which aren't the PR's doing.
+  const own = shown.filter((r) => !r.isInternal);
+  const pool = own.length ? own : shown;
+  const worst = pool.reduce((a, b) => (Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a));
   const fl = worst.firstLoad.raw;
   const icon = fl.delta > 0 ? '🔺' : fl.delta < 0 ? '🔻' : '•';
   const counts = `${shown.length} route${shown.length === 1 ? '' : 's'} changed`;
@@ -236,6 +240,8 @@ function render(diff: SnapshotDiff, options: MarkdownOptions, detail: 'full' | '
   const bl = budgetLine(budgets);
   if (bl) out.push(bl, '');
   out.push(headline(diff, shown, findings, opts.minBytes), '');
+  const fw = frameworkNote(diff);
+  if (fw) out.push(`> ℹ️ ${fw}`, '');
 
   if (shown.length) {
     const tableRoutes = detail === 'minimal' ? shown.slice(0, 50) : shown;

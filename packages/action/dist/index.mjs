@@ -72,11 +72,15 @@ import os from "os";
 import path7 from "path";
 import { performance } from "perf_hooks";
 import { parseArgs } from "util";
+import zlib from "zlib";
 
 // ../cli/src/adapter/paths.ts
 var PROJECT = "[project]/";
 var EXTERNALS = "[externals]/";
 var NEXT_INTERNAL = ".next-internal/";
+var TURBOPACK = "[turbopack]/";
+var NEXT_GENERATED = "[next]/";
+var CLIENT_FS = "[client-fs]/";
 function detectAppRoot(paths) {
   for (const p of paths) {
     if (!p.startsWith(PROJECT) || p.includes("/node_modules/")) continue;
@@ -95,9 +99,25 @@ function pnpmVersion(rel, name) {
   return version || void 0;
 }
 function normalizePath(path9, appRoot) {
+  path9 = path9.replace(/ \[[\w-]+\] \([^()]*\)$/, "");
   if (path9.startsWith(EXTERNALS)) {
     const subpath = path9.slice(EXTERNALS.length);
     return { key: `external:${subpath}`, kind: "external", subpath };
+  }
+  if (path9.startsWith(TURBOPACK)) {
+    const subpath = `turbopack/${path9.slice(TURBOPACK.length)}`;
+    return { key: `internal:${subpath}`, kind: "internal", subpath };
+  }
+  if (path9.startsWith(NEXT_GENERATED)) {
+    const subpath = `next/${path9.slice(NEXT_GENERATED.length)}`.replace(/_[0-9a-f]{6,}(?=\.)/g, "_*");
+    return { key: `internal:${subpath}`, kind: "internal", subpath };
+  }
+  if (path9.startsWith(CLIENT_FS)) {
+    const rest = path9.slice(CLIENT_FS.length);
+    const dir = rest.slice(0, rest.lastIndexOf("/") + 1);
+    const ext = /\.[a-z0-9]+$/i.exec(rest)?.[0] ?? "";
+    const subpath = `${dir}*${ext}`;
+    return { key: `generated:${subpath}`, kind: "generated", subpath };
   }
   if (!path9.startsWith(PROJECT)) {
     return { key: `unknown:${path9}`, kind: "unknown", subpath: path9 };
@@ -147,29 +167,36 @@ var AdapterError = class extends Error {
   }
   line;
 };
-var str = (r, k, line) => {
+var str = (r, k, line, label = String(r.type)) => {
   const v = r[k];
-  if (typeof v !== "string") throw new AdapterError(`${String(r.type)}.${k} must be a string`, line);
+  if (typeof v !== "string") throw new AdapterError(`${label}.${k} must be a string`, line);
   return v;
 };
-var num = (r, k, line) => {
+var num = (r, k, line, label = String(r.type)) => {
   const v = r[k];
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new AdapterError(`${String(r.type)}.${k} must be a number`, line);
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new AdapterError(`${label}.${k} must be a number`, line);
   return v;
 };
-var strArr = (r, k, line) => {
+var strArr = (r, k, line, label = String(r.type)) => {
   const v = r[k];
   if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) {
-    throw new AdapterError(`${String(r.type)}.${k} must be a string[]`, line);
+    throw new AdapterError(`${label}.${k} must be a string[]`, line);
   }
   return v;
 };
-var obj = (r, k, line) => {
+var obj = (r, k, line, label = String(r.type)) => {
   const v = r[k];
-  if (typeof v !== "object" || v === null || Array.isArray(v)) throw new AdapterError(`${String(r.type)}.${k} must be an object`, line);
+  if (typeof v !== "object" || v === null || Array.isArray(v)) throw new AdapterError(`${label}.${k} must be an object`, line);
   return v;
 };
-var isClientFile = (file) => file.startsWith("[client-fs]/");
+var FONT_EXT = /\.(woff2?|ttf|otf|eot)$/i;
+function assetTypeOf(file) {
+  if (/\.(m?js|cjs)$/i.test(file)) return "js";
+  if (/\.css$/i.test(file)) return "css";
+  if (FONT_EXT.test(file)) return "font";
+  return "other";
+}
+var isClientJs = (file) => file.startsWith("[client-fs]/") && assetTypeOf(file) === "js";
 function parseNextAnalyzeExport(text, options = {}) {
   return parseNextAnalyzeLines(text.split("\n"), options);
 }
@@ -222,7 +249,7 @@ function parseNextAnalyzeLines(lines, options = {}) {
       }
       case "module": {
         const deps = obj(r, "dependencies", lineNo);
-        const dep = (k) => deps[k] === void 0 ? [] : strArr(deps, k, lineNo);
+        const dep = (k) => deps[k] === void 0 ? [] : strArr(deps, k, lineNo, "module.dependencies");
         rawModules.push({ ident: str(r, "ident", lineNo), path: str(r, "path", lineNo), sync: dep("sync"), async: dep("async"), traced: dep("traced") });
         break;
       }
@@ -232,19 +259,22 @@ function parseNextAnalyzeLines(lines, options = {}) {
         route.seen = true;
         const entries = r.entries;
         if (!Array.isArray(entries)) throw new AdapterError("route.entries must be an array", lineNo);
-        route.entries = entries.map((e) => {
-          if (typeof e !== "object" || e === null) throw new AdapterError("route entry must be an object", lineNo);
+        route.entries = entries.map((e, i) => {
+          const at = `route.entries[${i}]`;
+          if (typeof e !== "object" || e === null) throw new AdapterError(`${at} must be an object`, lineNo);
           const er = e;
           return {
-            id: str(er, "route_entry_id", lineNo),
-            moduleIdent: str(er, "module_ident", lineNo),
-            modulePath: str(er, "module_path", lineNo),
-            role: str(er, "role", lineNo),
-            entryKind: str(er, "entry_kind", lineNo)
+            id: str(er, "route_entry_id", lineNo, at),
+            moduleIdent: str(er, "module_ident", lineNo, at),
+            modulePath: str(er, "module_path", lineNo, at),
+            role: str(er, "role", lineNo, at),
+            // Route handlers (app/**/route.ts) export a client bootstrap entry without entry_kind
+            // (seen on shadcn/ui, Next 16.4.2). Newer fields like client_references are ignored.
+            entryKind: er.entry_kind === void 0 ? "unknown" : str(er, "entry_kind", lineNo, at)
           };
         });
         const cov = obj(r, "coverage", lineNo);
-        route.coverage = { entries: str(cov, "entries", lineNo), groups: str(cov, "groups", lineNo) };
+        route.coverage = { entries: str(cov, "entries", lineNo, "route.coverage"), groups: str(cov, "groups", lineNo, "route.coverage") };
         break;
       }
       case "output":
@@ -322,9 +352,15 @@ function parseNextAnalyzeLines(lines, options = {}) {
       entries: r.entries,
       coverage: r.coverage,
       groups: r.groups,
-      outputs: r.outputs.map((o) => ({ ...o, isClient: isClientFile(o.file), isLazyOnly: lazy.has(o.file) })),
+      outputs: r.outputs.map((o) => ({ ...o, assetType: assetTypeOf(o.file), isClient: isClientJs(o.file), isLazyOnly: lazy.has(o.file) })),
       parts: r.parts.map(
-        (p) => ({ ...p, source: ref(p.sourcePath), isClient: isClientFile(p.file), isLazy: lazy.has(p.file) })
+        (p) => ({
+          ...p,
+          source: ref(p.sourcePath),
+          assetType: assetTypeOf(p.file),
+          isClient: isClientJs(p.file),
+          isLazy: lazy.has(p.file)
+        })
       )
     });
   }
@@ -438,7 +474,7 @@ async function resolveCommit(root, ref, onFetch) {
   return git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], root);
 }
 async function addWorktree(root, dir, sha, echo = "quiet") {
-  await exec("git", ["worktree", "add", "--detach", dir, sha], { cwd: root, echo });
+  await exec("git", ["-c", "core.longpaths=true", "worktree", "add", "--detach", dir, sha], { cwd: root, echo });
 }
 async function removeWorktree(root, dir) {
   try {
@@ -590,13 +626,34 @@ var RouteGraph = class {
     }
     return void 0;
   }
+  // First [app-client] module (in BFS order, so on the shortest chain) per source key and per package.
+  // Built once on first use: scanning the whole order per query was O(modules × changes), which took
+  // ~85 s on shadcn/ui (24k modules, ~1,600 changed modules on each of 33 routes).
+  firstByKey;
+  firstByPackage;
+  index() {
+    if (this.firstByKey && this.firstByPackage) return { byKey: this.firstByKey, byPackage: this.firstByPackage };
+    const byKey = /* @__PURE__ */ new Map();
+    const byPackage = /* @__PURE__ */ new Map();
+    for (const id of this.order) {
+      const m = this.snapshot.modules.get(id);
+      if (!m || m.layer !== "app-client") continue;
+      if (!byKey.has(m.source.key)) byKey.set(m.source.key, id);
+      if (m.source.packageName && !byPackage.has(m.source.packageName)) byPackage.set(m.source.packageName, id);
+    }
+    this.firstByKey = byKey;
+    this.firstByPackage = byPackage;
+    return { byKey, byPackage };
+  }
   /** Why is this source key in the browser bundle? Targets `[app-client]` modules. */
   chainToKey(key) {
-    return this.chainTo((m) => m.layer === "app-client" && m.source.key === key);
+    const id = this.index().byKey.get(key);
+    return id === void 0 ? void 0 : this.build(id);
   }
   /** Why is this package in the browser bundle? Ends at the module where the chain enters the package. */
   chainToPackage(name) {
-    return this.chainTo((m) => m.layer === "app-client" && m.source.packageName === name);
+    const id = this.index().byPackage.get(name);
+    return id === void 0 ? void 0 : this.build(id);
   }
   build(target) {
     const nodes = [];
@@ -956,6 +1013,27 @@ function diffSnapshots(base, pr, options = {}) {
   };
 }
 
+// ../cli/src/model/framework.ts
+var FRAMEWORK = ["next", "react", "react-dom"];
+var LABEL = { next: "Next.js", react: "React", "react-dom": "React DOM" };
+function frameworkChanges(diff) {
+  const out = /* @__PURE__ */ new Map();
+  for (const r of diff.routes) {
+    for (const p of r.packages) {
+      const name = p.packageName;
+      if (!name || !FRAMEWORK.includes(name) || !p.versions || out.has(name)) continue;
+      const from = p.versions.base.join(", ");
+      const to = p.versions.pr.join(", ");
+      if (from && to && from !== to) out.set(name, { name, label: LABEL[name], from, to });
+    }
+  }
+  return FRAMEWORK.flatMap((n) => {
+    const c = out.get(n);
+    return c ? [c] : [];
+  });
+}
+var compilerChanged = (diff) => frameworkChanges(diff).some((c) => c.name === "next");
+
 // ../cli/src/rules/rules.ts
 import path6 from "path";
 
@@ -1042,7 +1120,16 @@ var DOCS = {
 
 // ../cli/src/rules/rules.ts
 var grewFirstLoad = (c, min) => c.firstLoad.delta >= min;
-var grownPackages = (ctx) => ctx.route.packages.filter((p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes));
+var packageKeys = (route, name) => new Set(route?.parts.filter((p) => p.isClient && p.source.packageName === name).map((p) => p.source.key));
+function isCompilerDrift(ctx, p) {
+  if (!ctx.compilerChanged || p.status !== "changed" || p.versions || !p.packageName) return false;
+  const before = packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName);
+  const after = packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName);
+  return before.size === after.size && [...after].every((k) => before.has(k));
+}
+var grownPackages = (ctx) => ctx.route.packages.filter(
+  (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p)
+);
 var importedBy = (chain) => chain?.importer ? ` Imported by ${shortKey(chain.importer)}.` : "";
 var prRoute = (ctx) => ctx.pr.routes.get(ctx.route.route);
 function packageVersions(route) {
@@ -1126,7 +1213,7 @@ var lazyLoadCandidate = {
     const out = [];
     for (const p of ctx.route.packages) {
       const chain = p.chain;
-      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes) continue;
+      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p)) continue;
       if (!chain?.clientBoundary || chain.viaDynamicImport || !chain.importer) continue;
       const steps = chain.steps;
       const importerIdx = steps.findIndex((s) => s.key === chain.importer);
@@ -1276,11 +1363,12 @@ function runRules(diff, base, pr, opts = {}) {
   const options = { ...DEFAULT_RULE_OPTIONS, ...rest };
   options.largeBytes = Math.max(options.largeBytes, options.minBytes);
   const merged = /* @__PURE__ */ new Map();
+  const compilerChanged2 = compilerChanged(diff);
   for (const route of diff.routes) {
     if (route.status !== "changed" && route.status !== "added") continue;
     if (route.isInternal && !options.includeInternalRoutes) continue;
     for (const rule of rules) {
-      for (const f of rule.check({ route, base, pr, options })) {
+      for (const f of rule.check({ route, base, pr, options, compilerChanged: compilerChanged2 })) {
         const id = `${f.ruleId}\0${f.subject}`;
         const existing = merged.get(id);
         if (!existing) {
@@ -1303,6 +1391,15 @@ function analyze(base, pr, options = {}) {
   const diff = diffSnapshots(base, pr);
   const budget = options.config ? checkBudgets(diff, options.config, { minBytes }) : { results: [], findings: [] };
   return { diff, budgets: budget.results, findings: [...budget.findings, ...runRules(diff, base, pr, { minBytes })] };
+}
+
+// ../cli/src/report/notes.ts
+function frameworkNote(diff) {
+  const changes = frameworkChanges(diff);
+  if (!changes.length) return void 0;
+  const list = changes.map((c) => `${c.label} ${c.from} \u2192 ${c.to}`).join(", ");
+  const compiler = changes.some((c) => c.name === "next");
+  return `This PR changes ${list}.${compiler ? " Compiler and minifier changes can shift the size of every package slightly." : ""}`;
 }
 
 // ../cli/src/report/rows.ts
@@ -1361,7 +1458,9 @@ function headline(diff, shown, findings, min) {
   const nSug = findings.length;
   const sug = nSug ? ` \xB7 ${nSug} suggestion${nSug === 1 ? "" : "s"}` : "";
   if (!shown.length) return `\u2705 No route's JS changed by ${formatBytes(min)} or more.${sug}`;
-  const worst = shown.reduce((a, b) => Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a);
+  const own = shown.filter((r) => !r.isInternal);
+  const pool = own.length ? own : shown;
+  const worst = pool.reduce((a, b) => Math.abs(b.firstLoad.raw.delta) > Math.abs(a.firstLoad.raw.delta) ? b : a);
   const fl = worst.firstLoad.raw;
   const icon = fl.delta > 0 ? "\u{1F53A}" : fl.delta < 0 ? "\u{1F53B}" : "\u2022";
   const counts = `${shown.length} route${shown.length === 1 ? "" : "s"} changed`;
@@ -1496,6 +1595,8 @@ function render(diff, options, detail) {
   const bl = budgetLine(budgets);
   if (bl) out.push(bl, "");
   out.push(headline(diff, shown, findings, opts.minBytes), "");
+  const fw = frameworkNote(diff);
+  if (fw) out.push(`> \u2139\uFE0F ${fw}`, "");
   if (shown.length) {
     const tableRoutes = detail === "minimal" ? shown.slice(0, 50) : shown;
     out.push(...routeTable(tableRoutes), "");
@@ -1570,7 +1671,7 @@ ${REPORT_USAGE}`;
 // ../cli/src/commands/diff.ts
 import fs9 from "fs";
 import { parseArgs as parseArgs2 } from "util";
-import zlib from "zlib";
+import zlib2 from "zlib";
 var DIFF_USAGE = `Usage: bundle-mop diff <base-export> <pr-export> [options]
 
 Diffs two saved \`next analyze export\` files. To compare your branch with main in one step, use

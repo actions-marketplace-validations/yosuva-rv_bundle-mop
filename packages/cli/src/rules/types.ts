@@ -48,6 +48,11 @@ export interface RuleContext {
   base: AnalyzeSnapshot;
   pr: AnalyzeSnapshot;
   options: RuleOptions;
+  /**
+   * The PR changes the Next.js version. Its compiler then re-minifies every package, so a package whose
+   * version and files are unchanged can still "grow" by a few kB. Rules must not blame those packages.
+   */
+  compilerChanged?: boolean;
 }
 
 /** A per-route finding before merging (`routes` filled in by the engine). */

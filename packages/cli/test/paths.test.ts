@@ -65,6 +65,37 @@ describe('normalizePath', () => {
   });
 });
 
+describe('normalizePath: framework and generated sources (seen on shadcn/ui)', () => {
+  const root = 'apps/v4/';
+
+  it('names the Turbopack runtime as internal', () => {
+    expect(normalizePath('[turbopack]/browser/runtime/base/runtime-base.ts', root)).toEqual({
+      key: 'internal:turbopack/browser/runtime/base/runtime-base.ts',
+      kind: 'internal',
+      subpath: 'turbopack/browser/runtime/base/runtime-base.ts',
+    });
+  });
+
+  it('drops the changing config hash from next/font modules', () => {
+    expect(normalizePath('[next]/internal/font/google/geist_798ff10f.module.css', root).key).toBe('internal:next/internal/font/google/geist_*.module.css');
+    expect(normalizePath('[next]/internal/font/google/vazirmatn_33215607.js', root).key).toBe('internal:next/internal/font/google/vazirmatn_*.js');
+  });
+
+  it('strips an ident tag from a source path', () => {
+    expect(normalizePath('[next]/internal/font/google/vazirmatn_33215607.module.css [app-client] (css module)', root).key).toBe(
+      'internal:next/internal/font/google/vazirmatn_*.module.css',
+    );
+  });
+
+  it('gives hashed build output a stable key per folder and extension', () => {
+    const a = normalizePath('[client-fs]/_next/static/media/3fd1b3eda9c5392f-s.28efgb-r-zxeb.woff2', root);
+    const b = normalizePath('[client-fs]/_next/static/media/2537dffe910bb2e4-s.28efgb-r-zxeb.woff2', root);
+    expect(a).toEqual({ key: 'generated:_next/static/media/*.woff2', kind: 'generated', subpath: '_next/static/media/*.woff2' });
+    expect(b.key).toBe(a.key); // same font, new hash: no longer "removed + added"
+    expect(normalizePath('[client-fs]/_next/static/chunks/12kecf9glx065.js', root).key).toBe('generated:_next/static/chunks/*.js');
+  });
+});
+
 describe('parseIdent', () => {
   it('reads layer and kinds', () => {
     expect(parseIdent('[project]/app/page.tsx [app-rsc] (ecmascript, Next.js Server Component)')).toEqual({
