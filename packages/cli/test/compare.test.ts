@@ -48,7 +48,8 @@ function fakeApp(dir: string, nextVersion?: string) {
 const progress: string[] = [];
 const io = { progress: (l: string) => progress.push(l) };
 
-describe('git helpers', () => {
+// These spawn many real git/node processes; on Windows (antivirus, OneDrive) that can exceed vitest's 5 s default.
+describe('git helpers', { timeout: 30_000 }, () => {
   it('finds the default base, merge base and dirty state', async () => {
     const r = repo('main');
     const first = g(r, 'rev-parse', 'HEAD');
@@ -81,7 +82,7 @@ describe('git helpers', () => {
   });
 });
 
-describe('exec (quiet)', () => {
+describe('exec (quiet)', { timeout: 30_000 }, () => {
   it('hides output on success and shows the tail on failure', async () => {
     const ok = await exec(process.execPath, ['-e', 'console.log("hello")'], { cwd: tmpRoot, echo: 'quiet' });
     expect(ok).toBe('');
@@ -95,7 +96,7 @@ describe('exec (quiet)', () => {
   });
 });
 
-describe('bundle-mop compare: errors a user can hit', () => {
+describe('bundle-mop compare: errors a user can hit', { timeout: 30_000 }, () => {
   it('shows help', async () => {
     const r = await compareCommand(['--help'], io);
     expect(r).toMatchObject({ code: 0, output: expect.stringContaining('Usage: bundle-mop compare') });

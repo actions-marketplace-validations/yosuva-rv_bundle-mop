@@ -3,7 +3,7 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.2.0 (2026-11-22)
 
 - **New: `bundle-mop compare`.** One command, run inside your Next.js app, compares your branch (uncommitted changes
   included) with `main` from the merge base, like a pull request. The base is analyzed in a temporary git worktree
