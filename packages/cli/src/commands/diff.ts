@@ -25,9 +25,9 @@ function readSnapshot(file: string): AnalyzeSnapshot {
   } catch (e) {
     throw new Error(`cannot read ${file}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`);
   }
-  const text = (file.endsWith('.gz') ? zlib.gunzipSync(buf) : buf).toString('utf8');
+  const bytes = file.endsWith('.gz') ? zlib.gunzipSync(buf) : buf;
   try {
-    return parseNextAnalyzeExport(text);
+    return parseNextAnalyzeExport(bytes);
   } catch (e) {
     if (e instanceof AdapterError) throw new Error(`${file}: ${e.message}`);
     throw e;

@@ -19,6 +19,12 @@ Fixes from running Bundle Mop on real open-source apps (shadcn/ui, Dify, Cal.com
   ignore packages that only changed size because the new compiler re-minified them (same version, same files).
 - **Headline** picks the app's own routes, not Next-internal ones a framework upgrade adds (`/_global-error`).
 - **16× faster diffs on big apps:** import chains are looked up from an index (shadcn/ui: 1 min 28 s → 5.5 s).
+- **Very large apps work.** Dify's export is over 512 MB, more than the longest string Node can hold, so reading
+  it crashed with `Cannot create a string longer than 0x1fffffe8 characters`. Exports are now parsed from bytes,
+  line by line; `parseNextAnalyzeExport` accepts a `Buffer` as well as a string.
+- **No barrel advice for subpath imports.** `optimize-package-imports` told Dify to stop importing `@lexical/react` from
+  its index, but Dify already imports every module by subpath. The rule now fires only when a few entry modules
+  (a barrel) pull in most of the package.
 - `compare`: cached base analyses are gzipped (a large app's export is ~200 MB of JSON); 0.2.0 caches still work.
 - `compare` and the Action: base checkouts enable `core.longpaths`, so repos with deep paths work on Windows.
 

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { RouteData } from '../adapter/types.js';
+import type { AnalyzeSnapshot, RouteData } from '../adapter/types.js';
 import { shortKey } from '../model/chains.js';
 import type { ImportChain } from '../model/chains.js';
 import type { ContributionDiff } from '../model/diff.js';
@@ -31,6 +31,30 @@ const grownPackages = (ctx: RuleContext) =>
   ctx.route.packages.filter(
     (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p),
   );
+
+/**
+ * Package name → its browser modules (source keys) that code outside the package imports directly. A barrel import
+ * gives one entry (`index.js`) fanning out to many modules; subpath imports give an entry per module.
+ */
+const entryCache = new WeakMap<AnalyzeSnapshot, Map<string, Set<string>>>();
+function packageEntries(snap: AnalyzeSnapshot): Map<string, Set<string>> {
+  let out = entryCache.get(snap);
+  if (out) return out;
+  out = new Map();
+  for (const m of snap.modules.values()) {
+    if (m.layer !== 'app-client') continue;
+    for (const ident of [...m.sync, ...m.async]) {
+      const d = snap.modules.get(ident);
+      const name = d?.source.packageName;
+      if (!d || !name || d.layer !== 'app-client' || name === m.source.packageName) continue;
+      let set = out.get(name);
+      if (!set) out.set(name, (set = new Set()));
+      set.add(d.source.key);
+    }
+  }
+  entryCache.set(snap, out);
+  return out;
+}
 
 const importedBy = (chain: ImportChain | undefined) => (chain?.importer ? ` Imported by ${shortKey(chain.importer)}.` : '');
 
@@ -170,6 +194,10 @@ export const optimizePackageImports: Rule = {
       if (isOptimizedByNext(name)) continue;
       const modules = new Set(parts.filter((x) => x.source.packageName === name).map((x) => x.source.key));
       if (modules.size < ctx.options.moduleThreshold) continue;
+      // Already imported by subpath (most modules are imported directly from outside the package, e.g. Dify's
+      // `@lexical/react/LexicalComposerContext`): there is no barrel for optimizePackageImports to trim.
+      const entries = packageEntries(ctx.pr).get(name);
+      if (entries && [...modules].filter((k) => entries.has(k)).length * 2 > modules.size) continue;
       const f: RouteFinding = {
         ruleId: this.id,
         severity: 'info',

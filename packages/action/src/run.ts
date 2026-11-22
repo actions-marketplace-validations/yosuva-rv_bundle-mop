@@ -87,8 +87,9 @@ export async function runAction(env: NodeJS.ProcessEnv = process.env): Promise<A
     log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? 'y' : 'ies'})`);
   }
 
-  const base = parseNextAnalyzeExport(fs.readFileSync(baseFile, 'utf8'));
-  const head = parseNextAnalyzeExport(fs.readFileSync(prFile, 'utf8'));
+  // Bytes, not strings: a big app's export can exceed V8's ~512 MB string limit.
+  const base = parseNextAnalyzeExport(fs.readFileSync(baseFile));
+  const head = parseNextAnalyzeExport(fs.readFileSync(prFile));
   const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...(config ? { config } : {}) });
   const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
 

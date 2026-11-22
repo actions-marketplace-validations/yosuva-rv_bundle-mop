@@ -197,8 +197,18 @@ function assetTypeOf(file) {
   return "other";
 }
 var isClientJs = (file) => file.startsWith("[client-fs]/") && assetTypeOf(file) === "js";
-function parseNextAnalyzeExport(text, options = {}) {
-  return parseNextAnalyzeLines(text.split("\n"), options);
+function parseNextAnalyzeExport(input, options = {}) {
+  return parseNextAnalyzeLines(typeof input === "string" ? input.split("\n") : bufferLines(input), options);
+}
+function* bufferLines(bytes) {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let start = 0;
+  while (start <= buf.length) {
+    let end = buf.indexOf(10, start);
+    if (end === -1) end = buf.length;
+    yield buf.toString("utf8", start, end);
+    start = end + 1;
+  }
 }
 function parseNextAnalyzeLines(lines, options = {}) {
   const warnings = [];
@@ -1130,6 +1140,25 @@ function isCompilerDrift(ctx, p) {
 var grownPackages = (ctx) => ctx.route.packages.filter(
   (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p)
 );
+var entryCache = /* @__PURE__ */ new WeakMap();
+function packageEntries(snap) {
+  let out = entryCache.get(snap);
+  if (out) return out;
+  out = /* @__PURE__ */ new Map();
+  for (const m of snap.modules.values()) {
+    if (m.layer !== "app-client") continue;
+    for (const ident of [...m.sync, ...m.async]) {
+      const d = snap.modules.get(ident);
+      const name = d?.source.packageName;
+      if (!d || !name || d.layer !== "app-client" || name === m.source.packageName) continue;
+      let set = out.get(name);
+      if (!set) out.set(name, set = /* @__PURE__ */ new Set());
+      set.add(d.source.key);
+    }
+  }
+  entryCache.set(snap, out);
+  return out;
+}
 var importedBy = (chain) => chain?.importer ? ` Imported by ${shortKey(chain.importer)}.` : "";
 var prRoute = (ctx) => ctx.pr.routes.get(ctx.route.route);
 function packageVersions(route) {
@@ -1257,6 +1286,8 @@ var optimizePackageImports = {
       if (isOptimizedByNext(name)) continue;
       const modules = new Set(parts.filter((x) => x.source.packageName === name).map((x) => x.source.key));
       if (modules.size < ctx.options.moduleThreshold) continue;
+      const entries = packageEntries(ctx.pr).get(name);
+      if (entries && [...modules].filter((k) => entries.has(k)).length * 2 > modules.size) continue;
       const f = {
         ruleId: this.id,
         severity: "info",
@@ -1828,8 +1859,8 @@ async function runAction(env = process.env) {
     config.source = rel && !rel.startsWith("..") && !path8.isAbsolute(rel) ? rel.replace(/\\/g, "/") : configFile;
     log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? "y" : "ies"})`);
   }
-  const base = parseNextAnalyzeExport(fs10.readFileSync(baseFile, "utf8"));
-  const head = parseNextAnalyzeExport(fs10.readFileSync(prFile, "utf8"));
+  const base = parseNextAnalyzeExport(fs10.readFileSync(baseFile));
+  const head = parseNextAnalyzeExport(fs10.readFileSync(prFile));
   const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...config ? { config } : {} });
   const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
   const reportPath = path8.join(tmp, "bundle-mop.md");

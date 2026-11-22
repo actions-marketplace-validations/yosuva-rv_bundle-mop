@@ -154,13 +154,26 @@ describe('rules: synthetic cases', () => {
     expect(f[0]).toMatchObject({ ruleId: 'lost-lazy-loading', severity: 'warning', title: 'components/Chart.tsx moved from lazy to first-load JS (+40.0 kB)' });
   });
 
-  it('optimize-package-imports: flags many modules from a package Next does not optimize', () => {
+  it('optimize-package-imports: flags many modules from a package Next does not optimize, pulled in by a barrel', () => {
     const mods = Array.from({ length: 12 }, (_, i) => pnpm('some-icons', '1.0.0', `icons/i${i}.js`));
-    const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, ...mods.map((path) => ({ path, size: 500 }))], widgetGraph(mods.map((m) => ident(m)))));
+    const index = pnpm('some-icons', '1.0.0', 'index.js');
+    // Widget → some-icons/index.js (barrel) → 12 icon modules
+    const graph = widgetGraph([ident(index)]);
+    graph.modules = graph.modules.map((m) => (m.ident === ident(index) ? { ...m, sync: mods.map((x) => ident(x)) } : m));
+    graph.modules.push(...mods.map((x) => ({ ident: ident(x) })));
+    const parts = [index, ...mods].map((path) => ({ path, size: 500 }));
+    const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, ...parts], graph));
     expect(f.find((x) => x.ruleId === 'optimize-package-imports')).toMatchObject({
-      title: '12 modules of some-icons ship to the browser',
+      title: '13 modules of some-icons ship to the browser',
       suggestion: expect.stringContaining("optimizePackageImports: ['some-icons']"),
     });
+  });
+
+  it('optimize-package-imports: stays quiet when the app already imports by subpath (the Dify / @lexical/react case)', () => {
+    // Widget imports each of the 12 modules directly (`some-icons/icons/i0`, …): no barrel to trim.
+    const mods = Array.from({ length: 12 }, (_, i) => pnpm('some-icons', '1.0.0', `icons/i${i}.js`));
+    const f = findingsFor(snap('b', [basePart]), snap('p', [basePart, ...mods.map((path) => ({ path, size: 500 }))], widgetGraph(mods.map((m) => ident(m)))));
+    expect(ids(f)).not.toContain('optimize-package-imports');
   });
 
   it('optimize-package-imports: skips packages Next already optimizes', () => {

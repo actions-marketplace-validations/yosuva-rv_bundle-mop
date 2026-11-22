@@ -144,13 +144,13 @@ describe('bundle-mop compare: errors a user can hit', { timeout: 30_000 }, () =>
     const gz = path.join(cacheDirFor(app), 'abc.jsonl.gz');
     expect(fs.existsSync(gz)).toBe(true);
     expect(fs.statSync(gz).size).toBeLessThan(text.length / 10);
-    expect(readCache(app, 'abc')).toBe(text);
+    expect(readCache(app, 'abc')?.toString('utf8')).toBe(text);
     // legacy 0.2.0 file: read, then replaced by the gzipped one on the next write
     fs.writeFileSync(path.join(cacheDirFor(app), 'old.jsonl'), 'legacy');
-    expect(readCache(app, 'old')).toBe('legacy');
+    expect(readCache(app, 'old')?.toString('utf8')).toBe('legacy');
     writeCache(app, 'old', 'fresh');
     expect(fs.existsSync(path.join(cacheDirFor(app), 'old.jsonl'))).toBe(false);
-    expect(readCache(app, 'old')).toBe('fresh');
+    expect(readCache(app, 'old')?.toString('utf8')).toBe('fresh');
     // a corrupt gzip is a cache miss, not a crash
     fs.writeFileSync(path.join(cacheDirFor(app), 'bad.jsonl.gz'), 'not gzip');
     expect(readCache(app, 'bad')).toBeUndefined();

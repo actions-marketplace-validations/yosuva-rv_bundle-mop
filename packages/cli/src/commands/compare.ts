@@ -40,16 +40,17 @@ const defaultIO: CompareIO = { progress: (line) => process.stderr.write(`${line}
 export const cacheDirFor = (appDir: string) => path.join(appDir, 'node_modules', '.cache', 'bundle-mop');
 
 /**
- * Cached export for a commit: gzipped (a large app's export is ~200 MB of JSON, ~10x smaller compressed).
+ * Cached export for a commit, as bytes: gzipped (a large app's export is 200-600 MB of JSON, ~10x smaller
+ * compressed), and never decoded into one string, which V8 caps at ~512 MB.
  * Also reads uncompressed `.jsonl` caches written by 0.2.0.
  */
-export function readCache(appDir: string, sha: string): string | undefined {
+export function readCache(appDir: string, sha: string): Buffer | undefined {
   const dir = cacheDirFor(appDir);
   try {
     const gz = path.join(dir, `${sha}.jsonl.gz`);
-    if (fs.existsSync(gz)) return zlib.gunzipSync(fs.readFileSync(gz)).toString('utf8');
+    if (fs.existsSync(gz)) return zlib.gunzipSync(fs.readFileSync(gz));
     const plain = path.join(dir, `${sha}.jsonl`);
-    if (fs.existsSync(plain)) return fs.readFileSync(plain, 'utf8');
+    if (fs.existsSync(plain)) return fs.readFileSync(plain);
   } catch {
     // unreadable cache: treat as a miss
   }
@@ -57,11 +58,11 @@ export function readCache(appDir: string, sha: string): string | undefined {
 }
 
 /** Best-effort: a failed cache write never fails the command. Replaces an old uncompressed entry. */
-export function writeCache(appDir: string, sha: string, text: string): void {
+export function writeCache(appDir: string, sha: string, bytes: Uint8Array | string): void {
   const dir = cacheDirFor(appDir);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${sha}.jsonl.gz`), zlib.gzipSync(text, { level: 6 }));
+    fs.writeFileSync(path.join(dir, `${sha}.jsonl.gz`), zlib.gzipSync(bytes, { level: 6 }));
     fs.rmSync(path.join(dir, `${sha}.jsonl`), { force: true });
   } catch {
     // caching is best-effort
@@ -156,14 +157,14 @@ export async function compareCommand(argv: string[], io: CompareIO = defaultIO):
         onAnalyze: () => io.progress(`  … base ${sha.slice(0, 7)}: analyzing`),
         onCleanupFailed: (dir) => io.progress(`  ! could not remove the temporary checkout ${dir}`),
       });
-      const baseText = fs.readFileSync(baseFile, 'utf8');
-      base = parseNextAnalyzeExport(baseText);
-      writeCache(appDir, sha, baseText);
+      const baseBytes = fs.readFileSync(baseFile);
+      base = parseNextAnalyzeExport(baseBytes);
+      writeCache(appDir, sha, baseBytes);
       io.progress(`  ✓ analyzed base ${sha.slice(0, 7)} (${seconds(t)}; cached for next time)`);
     }
 
     // --- report ------------------------------------------------------------------------
-    const pr = parseNextAnalyzeExport(fs.readFileSync(headFile, 'utf8'));
+    const pr = parseNextAnalyzeExport(fs.readFileSync(headFile));
     base.snapshotName = `${baseRef} @ ${sha.slice(0, 7)}`;
     pr.snapshotName = dirty ? 'working tree' : `HEAD @ ${head.slice(0, 7)}`;
     const config = loadBudgets(values.config, [appDir, root]);

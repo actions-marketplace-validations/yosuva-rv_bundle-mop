@@ -12,7 +12,7 @@ No AI and no network: same input, same output.
 | `duplicate-package` | warning | A package ships in ≥ 2 versions on a route **and that's new in this PR** (pnpm layouts only, since npm paths carry no version) | `pnpm why`, align versions or add an override |
 | `server-candidate` | info | A formatting/parsing library (date, markdown, highlighting, YAML…) reaches first-load through a `"use client"` boundary, not via dynamic import | Do the work in a Server Component and pass props |
 | `lazy-load-candidate` | info | Any package grows first-load by ≥ `largeBytes` through a client boundary, with an app importer | `next/dynamic` snippet for the importer's parent file |
-| `optimize-package-imports` | info | ≥ `moduleThreshold` modules of one package ship, and Next doesn't already optimize it | Subpath imports or `experimental.optimizePackageImports` |
+| `optimize-package-imports` | info | ≥ `moduleThreshold` modules of one package ship through a few entry modules (a barrel), and Next doesn't already optimize it | Subpath imports or `experimental.optimizePackageImports` |
 
 Options (defaults): `minBytes` 1,000 (noise floor), `largeBytes` 30,000, `moduleThreshold` 10, `includeInternalRoutes` false.
 `largeBytes` is raised to `minBytes` when lower: nothing under the noise floor is ever flagged. The CLI's `--min-bytes`
@@ -27,6 +27,9 @@ Custom rules: pass `rules: Rule[]` (`{ id, description, check(ctx) → RouteFind
   full build `lodash/lodash.js` (from `import _ from 'lodash'`) is flagged.
 - **Next's default `optimizePackageImports` list** is copied from `next/dist/server/config.js` (16.4.6) and matches the
   docs page: lucide-react, date-fns, lodash-es, @mui/*, react-icons/*, @effect/*, and others. Re-check on Next upgrades.
+- **Subpath imports are not barrels**: `optimize-package-imports` stays quiet when code outside the package imports
+  more than half of its shipped modules directly (Dify imports `@lexical/react/LexicalComposerContext` and 12 other
+  subpaths; there is nothing for `optimizePackageImports` to trim).
 - Only first-load growth counts. Lazy-only growth produces no findings.
 
 Docs links were checked live on 2026-11-19:
