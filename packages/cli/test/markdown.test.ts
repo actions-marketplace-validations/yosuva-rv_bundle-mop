@@ -54,6 +54,15 @@ describe('markdown: edge cases', () => {
     );
   });
 
+  it('headlines the app\'s own routes, not Next-internal ones a framework upgrade adds (the shadcn/ui case)', () => {
+    const md = report(
+      fakeSnapshot('b', { '/docs': [page] }),
+      fakeSnapshot('p', { '/docs': [{ ...page, size: 35_000 }], '/_global-error': [{ path: '[project]/x.js', size: 570_000 }] }),
+    );
+    expect(md).toContain('**Largest change:** `/docs` first-load +30.0 kB');
+    expect(md).toContain('| `/_global-error` (new) |'); // still listed, just not the headline
+  });
+
   it('shows added and removed routes', () => {
     const md = report(
       fakeSnapshot('b', { '/': [page], '/old': [{ path: '[project]/app/old/page.tsx', size: 3_000 }] }),

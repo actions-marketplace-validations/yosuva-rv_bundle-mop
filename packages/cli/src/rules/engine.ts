@@ -1,5 +1,6 @@
 import type { AnalyzeSnapshot } from '../adapter/types.js';
 import type { SnapshotDiff } from '../model/diff.js';
+import { compilerChanged as didCompilerChange } from '../model/framework.js';
 import { BUILTIN_RULES } from './rules.js';
 import { DEFAULT_RULE_OPTIONS } from './types.js';
 import type { Finding, Rule, RuleOptions, Severity } from './types.js';
@@ -20,12 +21,13 @@ export function runRules(diff: SnapshotDiff, base: AnalyzeSnapshot, pr: AnalyzeS
   // Nothing below the noise floor is ever flagged, whatever a rule's own threshold says.
   options.largeBytes = Math.max(options.largeBytes, options.minBytes);
   const merged = new Map<string, Finding>();
+  const compilerChanged = didCompilerChange(diff);
 
   for (const route of diff.routes) {
     if (route.status !== 'changed' && route.status !== 'added') continue;
     if (route.isInternal && !options.includeInternalRoutes) continue;
     for (const rule of rules) {
-      for (const f of rule.check({ route, base, pr, options })) {
+      for (const f of rule.check({ route, base, pr, options, compilerChanged })) {
         const id = `${f.ruleId}\u0000${f.subject}`;
         const existing = merged.get(id);
         if (!existing) {

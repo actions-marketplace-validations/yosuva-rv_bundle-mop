@@ -5,6 +5,25 @@ are versioned together. Until 1.0, minor versions may change output formats and 
 
 ## Unreleased
 
+Fixes from running Bundle Mop on real open-source apps (shadcn/ui, Dify, Cal.com):
+
+- **Crash on API routes fixed.** Route handlers (`app/**/route.ts`) export an entry without `entry_kind`; one such
+  route made the whole run fail. Unknown extra fields (like `client_references`) are ignored. Errors now say where
+  the problem is (`route.entries[0].entry_kind`) instead of `undefined.entry_kind`.
+- **Only JavaScript counts as JS.** Fonts (`.woff2`) and CSS listed among a route's client files were counted as
+  JavaScript (about 0.5 MB per route on shadcn/ui), and their hashed names showed up as fake "removed + added"
+  pairs. Parts now have an `assetType` (`js`, `css`, `font`, `other`); sizes, diffs and rules use JS only.
+- **Stable names for framework and generated code:** `[turbopack]/…` runtime, `[next]/…` modules (next/font hashes
+  dropped) and hashed `[client-fs]/…` chunks no longer churn between builds.
+- **Next.js upgrades explained:** when a PR changes the Next.js (or React) version, the report says so, and rules
+  ignore packages that only changed size because the new compiler re-minified them (same version, same files).
+- **Headline** picks the app's own routes, not Next-internal ones a framework upgrade adds (`/_global-error`).
+- **16× faster diffs on big apps:** import chains are looked up from an index (shadcn/ui: 1 min 28 s → 5.5 s).
+- `compare`: cached base analyses are gzipped (a large app's export is ~200 MB of JSON); 0.2.0 caches still work.
+- `compare` and the Action: base checkouts enable `core.longpaths`, so repos with deep paths work on Windows.
+
+## 0.2.0 (2026-11-22)
+
 - **New: `bundle-mop compare`.** One command, run inside your Next.js app, compares your branch (uncommitted changes
   included) with `main` from the merge base, like a pull request. The base is analyzed in a temporary git worktree
   with its own lockfile and cached by commit in `node_modules/.cache/bundle-mop`, so repeat runs take seconds.

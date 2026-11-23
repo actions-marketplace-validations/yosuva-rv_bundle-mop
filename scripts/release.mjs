@@ -41,8 +41,10 @@ if (!dryRun) {
 
 const changelogPath = path.join(root, 'CHANGELOG.md');
 const changelog = fs.readFileSync(changelogPath, 'utf8');
-if (!/^## Unreleased\s*$/m.test(changelog)) fail('CHANGELOG.md has no "## Unreleased" section to release');
-const unreleased = changelog.split(/^## Unreleased\s*$/m)[1]?.split(/^## /m)[0]?.trim() ?? '';
+// [ \t]* not \s*: \s would also eat the newline(s) after the heading.
+const UNRELEASED = /^## Unreleased[ \t]*$/m;
+if (!UNRELEASED.test(changelog)) fail('CHANGELOG.md has no "## Unreleased" section to release');
+const unreleased = changelog.split(UNRELEASED)[1]?.split(/^## /m)[0]?.trim() ?? '';
 if (!unreleased) fail('the "## Unreleased" section in CHANGELOG.md is empty; describe the changes first');
 
 const today = new Date().toISOString().slice(0, 10);
@@ -50,7 +52,7 @@ const edits = [
   { file: 'packages/cli/package.json', from: `"version": "${current}"`, to: `"version": "${version}"` },
   { file: 'packages/action/package.json', from: `"version": "${current}"`, to: `"version": "${version}"` },
   { file: 'packages/cli/src/index.ts', from: `export const VERSION = '${current}';`, to: `export const VERSION = '${version}';` },
-  { file: 'CHANGELOG.md', from: /^## Unreleased\s*$/m, to: `## ${version} (${today})` },
+  { file: 'CHANGELOG.md', from: UNRELEASED, to: `## ${version} (${today})` },
 ];
 
 console.log(`release: ${current} -> ${version}${dryRun ? ' (dry run)' : ''}`);

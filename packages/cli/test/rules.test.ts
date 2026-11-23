@@ -183,6 +183,20 @@ describe('rules: synthetic cases', () => {
     expect(findingsFor(base, pr, { includeInternalRoutes: true })[0]?.routes).toContain('/_not-found');
   });
 
+  it('ignores compiler drift during a Next.js upgrade, but still flags real changes (the shadcn/ui case)', () => {
+    const icons = (n: number, size: number) => Array.from({ length: n }, (_, i) => ({ path: pnpm('some-icons', '1.0.0', `icons/i${i}.js`), size }));
+    const next = (v: string) => ({ path: pnpm('next', v, 'dist/client/index.js'), size: 100_000 });
+    // Same 12 modules, same version, ~2.4 kB bigger only because Next's compiler changed: no finding.
+    const drift = findingsFor(snap('b', [basePart, next('16.4.2'), ...icons(12, 500)]), snap('p', [basePart, next('16.4.5'), ...icons(12, 700)]));
+    expect(ids(drift)).not.toContain('optimize-package-imports');
+    // The same upgrade plus a new import of the package (a 13th module) is a real change: flagged.
+    const real = findingsFor(snap('b', [basePart, next('16.4.2'), ...icons(12, 500)]), snap('p', [basePart, next('16.4.5'), ...icons(13, 700)]));
+    expect(ids(real)).toContain('optimize-package-imports');
+    // Without a Next upgrade, the same growth is not treated as drift.
+    const noUpgrade = findingsFor(snap('b', [basePart, next('16.4.5'), ...icons(12, 500)]), snap('p', [basePart, next('16.4.5'), ...icons(12, 700)]));
+    expect(ids(noUpgrade)).toContain('optimize-package-imports');
+  });
+
   it('accepts custom rules', () => {
     const f = runRules(diffSnapshots(snap('b', [basePart]), snap('p', [{ ...basePart, size: 9_000 }])), snap('b', []), snap('p', []), {
       rules: [{ id: 'custom', description: 'x', check: (ctx) => [{ ruleId: 'custom', severity: 'error', title: ctx.route.route, message: '', subject: 's', bytes: 1 }] }],

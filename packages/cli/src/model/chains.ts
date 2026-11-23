@@ -89,14 +89,37 @@ export class RouteGraph {
     return undefined;
   }
 
+  // First [app-client] module (in BFS order, so on the shortest chain) per source key and per package.
+  // Built once on first use: scanning the whole order per query was O(modules × changes), which took
+  // ~85 s on shadcn/ui (24k modules, ~1,600 changed modules on each of 33 routes).
+  private firstByKey?: Map<string, string>;
+  private firstByPackage?: Map<string, string>;
+
+  private index() {
+    if (this.firstByKey && this.firstByPackage) return { byKey: this.firstByKey, byPackage: this.firstByPackage };
+    const byKey = new Map<string, string>();
+    const byPackage = new Map<string, string>();
+    for (const id of this.order) {
+      const m = this.snapshot.modules.get(id);
+      if (!m || m.layer !== 'app-client') continue;
+      if (!byKey.has(m.source.key)) byKey.set(m.source.key, id);
+      if (m.source.packageName && !byPackage.has(m.source.packageName)) byPackage.set(m.source.packageName, id);
+    }
+    this.firstByKey = byKey;
+    this.firstByPackage = byPackage;
+    return { byKey, byPackage };
+  }
+
   /** Why is this source key in the browser bundle? Targets `[app-client]` modules. */
   chainToKey(key: string): ImportChain | undefined {
-    return this.chainTo((m) => m.layer === 'app-client' && m.source.key === key);
+    const id = this.index().byKey.get(key);
+    return id === undefined ? undefined : this.build(id);
   }
 
   /** Why is this package in the browser bundle? Ends at the module where the chain enters the package. */
   chainToPackage(name: string): ImportChain | undefined {
-    return this.chainTo((m) => m.layer === 'app-client' && m.source.packageName === name);
+    const id = this.index().byPackage.get(name);
+    return id === undefined ? undefined : this.build(id);
   }
 
   private build(target: string): ImportChain {

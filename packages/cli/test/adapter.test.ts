@@ -107,6 +107,30 @@ describe('adapter: validation', () => {
     expect(() => parseNextAnalyzeExport(`${meta}\n{"type":"module","ident":`)).toThrow(/line 2: invalid JSON/);
   });
 
+  it('accepts route-handler entries without entry_kind, and ignores new fields (real shadcn/ui export)', () => {
+    // From shadcn-ui/ui apps/v4 on Next 16.4.2: app/**/route.ts routes have a client bootstrap entry with no
+    // entry_kind, and page entries carry a client_references field our fixtures never had.
+    const route = {
+      type: 'route',
+      route: '/llm/[[...slug]]',
+      entries: [
+        { route_entry_id: 'a', module_ident: 'x [app-client] (ecmascript)', module_path: 'x', role: 'route' },
+        { route_entry_id: 'b', module_ident: 'y [app-route] (ecmascript)', module_path: 'y', role: 'route', entry_kind: 'server', client_references: ['z'] },
+      ],
+      coverage: { entries: 'exact', groups: 'exact' },
+    };
+    const snap = parseNextAnalyzeExport(`${meta.replace('"route_count":0,"selected_routes":0', '"route_count":1,"selected_routes":1')}\n${JSON.stringify(route)}`);
+    expect(snap.routes.get('/llm/[[...slug]]')?.entries.map((e) => e.entryKind)).toEqual(['unknown', 'server']);
+    expect(snap.warnings).toEqual([]);
+  });
+
+  it('names nested fields in errors instead of "undefined"', () => {
+    const bad = `${meta}\n{"type":"route","route":"/","entries":[{"route_entry_id":"a","module_ident":"x","module_path":"x","role":"route","entry_kind":7}],"coverage":{"entries":"exact","groups":"exact"}}`;
+    expect(() => parseNextAnalyzeExport(bad)).toThrow('line 2: route.entries[0].entry_kind must be a string');
+    const badDeps = `${meta}\n{"type":"module","ident":"m","path":"m","dependencies":{"sync":[1]}}`;
+    expect(() => parseNextAnalyzeExport(badDeps)).toThrow('line 2: module.dependencies.sync must be a string[]');
+  });
+
   it('reports wrongly typed fields', () => {
     const bad = `${meta}\n{"type":"part","route":"/","filename":"f","source_path":"p","size":"12","compressed_size":1}`;
     expect(() => parseNextAnalyzeExport(bad)).toThrow(/line 2: part\.size must be a number/);

@@ -3,6 +3,9 @@ import type { SourceRef } from './types.js';
 const PROJECT = '[project]/';
 const EXTERNALS = '[externals]/';
 const NEXT_INTERNAL = '.next-internal/';
+const TURBOPACK = '[turbopack]/';
+const NEXT_GENERATED = '[next]/';
+const CLIENT_FS = '[client-fs]/';
 
 /**
  * Finds where the Next app lives under `[project]/` by locating its root layout.
@@ -30,9 +33,32 @@ function pnpmVersion(rel: string, name: string): string | undefined {
 
 /** Turns an analyzer path (module `path` or part `source_path`) into a machine-independent ref. */
 export function normalizePath(path: string, appRoot: string): SourceRef {
+  // Some part source paths carry an ident tag, e.g. `…/x.module.css [app-client] (css module)`.
+  path = path.replace(/ \[[\w-]+\] \([^()]*\)$/, '');
+
   if (path.startsWith(EXTERNALS)) {
     const subpath = path.slice(EXTERNALS.length);
     return { key: `external:${subpath}`, kind: 'external', subpath };
+  }
+  // Turbopack's browser runtime: framework code with stable paths.
+  if (path.startsWith(TURBOPACK)) {
+    const subpath = `turbopack/${path.slice(TURBOPACK.length)}`;
+    return { key: `internal:${subpath}`, kind: 'internal', subpath };
+  }
+  // Modules Next generates (e.g. next/font CSS). Names end in a config hash that changes between builds:
+  // `geist_798ff10f.module.css` → `geist_*.module.css`.
+  if (path.startsWith(NEXT_GENERATED)) {
+    const subpath = `next/${path.slice(NEXT_GENERATED.length)}`.replace(/_[0-9a-f]{6,}(?=\.)/g, '_*');
+    return { key: `internal:${subpath}`, kind: 'internal', subpath };
+  }
+  // Build output referenced by its own content-hashed filename (runtime chunks, font files).
+  // The hash changes with any edit, so all of them in one folder share a key.
+  if (path.startsWith(CLIENT_FS)) {
+    const rest = path.slice(CLIENT_FS.length);
+    const dir = rest.slice(0, rest.lastIndexOf('/') + 1);
+    const ext = /\.[a-z0-9]+$/i.exec(rest)?.[0] ?? '';
+    const subpath = `${dir}*${ext}`;
+    return { key: `generated:${subpath}`, kind: 'generated', subpath };
   }
   if (!path.startsWith(PROJECT)) {
     return { key: `unknown:${path}`, kind: 'unknown', subpath: path };

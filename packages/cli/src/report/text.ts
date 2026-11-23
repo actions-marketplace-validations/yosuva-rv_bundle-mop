@@ -4,6 +4,7 @@ import type { BudgetResult } from '../budgets/check.js';
 import type { ContributionDiff, Delta, RouteDiff, SnapshotDiff } from '../model/diff.js';
 import type { Finding } from '../rules/types.js';
 import { formatBytes, formatDelta } from '../util/format.js';
+import { frameworkNote } from './notes.js';
 import { routeRows } from './rows.js';
 import type { ReportRow } from './rows.js';
 
@@ -116,6 +117,8 @@ export function renderTextDiff(diff: SnapshotDiff, options: TextOptions = {}): s
     `${changed} changed, ${added} added, ${removed} removed, ${unchanged} unchanged route(s)`,
     'Sizes are minified client JS. gzip figures are estimates.',
   ];
+  const fw = frameworkNote(diff);
+  if (fw) out.push(`Note: ${fw}`);
   const min = options.minBytes ?? 1_000;
   let quiet = 0;
   for (const r of diff.routes) {

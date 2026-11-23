@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { assetTypeOf } from '../src/adapter/next-analyze.js';
+import { diffSnapshots } from '../src/model/diff.js';
 import { routeSizes } from '../src/model/sizes.js';
+import { fakeSnapshot } from './helpers/fake-export.js';
 import { loadSnapshot, readRouteSummaries } from './helpers/fixtures.js';
 
 const route = (fixture: string, r: string) => {
@@ -12,6 +15,27 @@ describe.each(['basic', 'dynamic-barrel'])('client totals match Next route-summa
   it.each(readRouteSummaries(fixture).map((s) => [s.route, s] as const))('%s', (r, summary) => {
     const { client } = route(fixture, r);
     expect(client).toEqual({ raw: summary.client.size, compressed: summary.client.compressed_size });
+  });
+});
+
+describe('only JavaScript counts as JS (fonts and CSS are client files too)', () => {
+  it('classifies outputs by extension', () => {
+    expect(['a.js', 'a.mjs', 'a.cjs', 'a.css', 'a.woff2', 'a.woff', 'a.ttf', 'a.png'].map(assetTypeOf)).toEqual([
+      'js', 'js', 'js', 'css', 'font', 'font', 'font', 'other',
+    ]);
+  });
+
+  it('excludes CSS and fonts from route JS sizes and from the diff (shadcn/ui shipped 0.5 MB of fonts per route)', () => {
+    const page = { path: '[project]/app/page.tsx', size: 5_000 };
+    const font = (hash: string) => ({ path: `[client-fs]/_next/static/media/${hash}.woff2`, size: 166_000, file: `[client-fs]/_next/static/media/${hash}.woff2` });
+    const css = { path: '[project]/app/globals.css', size: 30_000, file: '[client-fs]/_next/static/chunks/abc.css' };
+    const base = fakeSnapshot('b', { '/': [page, font('aaaa'), css] });
+    const pr = fakeSnapshot('p', { '/': [page, font('bbbb'), css] });
+    const r = base.routes.get('/');
+    expect(r?.parts.filter((p) => !p.isClient).map((p) => p.assetType).sort()).toEqual(['css', 'font']);
+    expect(routeSizes(r as NonNullable<typeof r>).client.raw).toBe(5_000);
+    const d = diffSnapshots(base, pr);
+    expect(d.routes[0]).toMatchObject({ status: 'unchanged', modules: [] }); // the font's new hash is not a change
   });
 });
 

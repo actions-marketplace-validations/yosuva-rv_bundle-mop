@@ -74,7 +74,9 @@ export async function isDirty(root: string): Promise<boolean> {
 }
 
 export async function addWorktree(root: string, dir: string, sha: string, echo: Echo = 'quiet'): Promise<void> {
-  await exec('git', ['worktree', 'add', '--detach', dir, sha], { cwd: root, echo });
+  // core.longpaths: on Windows, repos with deep test paths (e.g. langgenius/dify) fail to check out otherwise.
+  // It is a no-op elsewhere.
+  await exec('git', ['-c', 'core.longpaths=true', 'worktree', 'add', '--detach', dir, sha], { cwd: root, echo });
 }
 
 /**

@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
+import zlib from 'node:zlib';
 import { parseNextAnalyzeExport } from '../adapter/index.js';
+import type { AnalyzeSnapshot } from '../adapter/index.js';
 import { captureBase } from '../capture/base.js';
 import type { Echo } from '../capture/exec.js';
 import { defaultBase, gitRoot, isDirty, mergeBase, resolveCommit, tryCommit } from '../capture/git.js';
@@ -36,6 +38,35 @@ const defaultIO: CompareIO = { progress: (line) => process.stderr.write(`${line}
 
 /** Where base analyses are cached, by commit SHA. Inside node_modules so it's never committed. */
 export const cacheDirFor = (appDir: string) => path.join(appDir, 'node_modules', '.cache', 'bundle-mop');
+
+/**
+ * Cached export for a commit: gzipped (a large app's export is ~200 MB of JSON, ~10x smaller compressed).
+ * Also reads uncompressed `.jsonl` caches written by 0.2.0.
+ */
+export function readCache(appDir: string, sha: string): string | undefined {
+  const dir = cacheDirFor(appDir);
+  try {
+    const gz = path.join(dir, `${sha}.jsonl.gz`);
+    if (fs.existsSync(gz)) return zlib.gunzipSync(fs.readFileSync(gz)).toString('utf8');
+    const plain = path.join(dir, `${sha}.jsonl`);
+    if (fs.existsSync(plain)) return fs.readFileSync(plain, 'utf8');
+  } catch {
+    // unreadable cache: treat as a miss
+  }
+  return undefined;
+}
+
+/** Best-effort: a failed cache write never fails the command. Replaces an old uncompressed entry. */
+export function writeCache(appDir: string, sha: string, text: string): void {
+  const dir = cacheDirFor(appDir);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sha}.jsonl.gz`), zlib.gzipSync(text, { level: 6 }));
+    fs.rmSync(path.join(dir, `${sha}.jsonl`), { force: true });
+  } catch {
+    // caching is best-effort
+  }
+}
 
 const seconds = (start: number) => `${((performance.now() - start) / 1000).toFixed(1)}s`;
 
@@ -98,18 +129,19 @@ export async function compareCommand(argv: string[], io: CompareIO = defaultIO):
     io.progress(`  ✓ analyzed your branch (${seconds(t)})`);
 
     // --- base, from cache if we've seen this commit ------------------------------------
-    const cacheFile = path.join(cacheDirFor(appDir), `${sha}.jsonl`);
-    let baseText: string | undefined;
-    if (!values['no-cache'] && fs.existsSync(cacheFile)) {
-      baseText = fs.readFileSync(cacheFile, 'utf8');
-      try {
-        parseNextAnalyzeExport(baseText);
-        io.progress(`  ✓ base ${sha.slice(0, 7)}: using cached analysis`);
-      } catch {
-        baseText = undefined; // corrupt or from an incompatible version: redo it
+    let base: AnalyzeSnapshot | undefined;
+    if (!values['no-cache']) {
+      const cached = readCache(appDir, sha);
+      if (cached !== undefined) {
+        try {
+          base = parseNextAnalyzeExport(cached);
+          io.progress(`  ✓ base ${sha.slice(0, 7)}: using cached analysis`);
+        } catch {
+          base = undefined; // corrupt or from an incompatible version: redo it
+        }
       }
     }
-    if (baseText === undefined) {
+    if (base === undefined) {
       t = performance.now();
       const baseFile = path.join(tmp, 'base.jsonl');
       await captureBase({
@@ -124,18 +156,13 @@ export async function compareCommand(argv: string[], io: CompareIO = defaultIO):
         onAnalyze: () => io.progress(`  … base ${sha.slice(0, 7)}: analyzing`),
         onCleanupFailed: (dir) => io.progress(`  ! could not remove the temporary checkout ${dir}`),
       });
-      baseText = fs.readFileSync(baseFile, 'utf8');
-      try {
-        fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-        fs.writeFileSync(cacheFile, baseText);
-      } catch {
-        // caching is best-effort
-      }
+      const baseText = fs.readFileSync(baseFile, 'utf8');
+      base = parseNextAnalyzeExport(baseText);
+      writeCache(appDir, sha, baseText);
       io.progress(`  ✓ analyzed base ${sha.slice(0, 7)} (${seconds(t)}; cached for next time)`);
     }
 
     // --- report ------------------------------------------------------------------------
-    const base = parseNextAnalyzeExport(baseText);
     const pr = parseNextAnalyzeExport(fs.readFileSync(headFile, 'utf8'));
     base.snapshotName = `${baseRef} @ ${sha.slice(0, 7)}`;
     pr.snapshotName = dirty ? 'working tree' : `HEAD @ ${head.slice(0, 7)}`;

@@ -1,7 +1,14 @@
 // Normalised model of a `next analyze export` snapshot.
 // Everything outside src/adapter/ works with these types, never with raw JSONL.
 
-export type SourceKind = 'app' | 'workspace' | 'package' | 'external' | 'internal' | 'unknown';
+/**
+ * `internal`: framework code with no package path (`[turbopack]/…` runtime, `[next]/…` generated modules,
+ * `.next-internal/…`). `generated`: build output referenced by its own hashed filename (`[client-fs]/…`).
+ */
+export type SourceKind = 'app' | 'workspace' | 'package' | 'external' | 'internal' | 'generated' | 'unknown';
+
+/** What kind of file an output is, from its extension. Only `js` counts as JavaScript. */
+export type AssetType = 'js' | 'css' | 'font' | 'other';
 
 /** A machine-independent identity for a source file. */
 export interface SourceRef {
@@ -55,6 +62,8 @@ export interface ChunkOutput {
   asyncLoaders: string[];
   /** `exact` | `not_a_chunk` | `unsupported` seen so far. */
   coverage: string;
+  assetType: AssetType;
+  /** Browser JavaScript: a `[client-fs]` output that is a `.js` file (CSS and fonts are not). */
   isClient: boolean;
   /** Loaded only via `async` (next/dynamic) groups, so not first-load JS. */
   isLazyOnly: boolean;
@@ -77,6 +86,12 @@ export interface ChunkPart {
   size: number;
   /** Per-part gzip. Summing these overstates whole-file gzip; treat sums as estimates. */
   compressedSize: number;
+  /** From the output file's extension. Fonts and CSS are listed as client files by the analyzer too. */
+  assetType: AssetType;
+  /**
+   * Browser JavaScript: in a `[client-fs]` `.js` output. All JS sizes, diffs and rules use only these parts.
+   * (Next's own route-summaries.json also counts CSS and fonts; on shadcn/ui that was ~0.5 MB per route.)
+   */
   isClient: boolean;
   isLazy: boolean;
 }
