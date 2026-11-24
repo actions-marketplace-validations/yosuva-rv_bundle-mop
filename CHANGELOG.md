@@ -3,7 +3,7 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.2.2 (2026-11-24)
 
 Found by applying a Bundle Mop suggestion to Dify and measuring the result (it saved 210 kB):
 

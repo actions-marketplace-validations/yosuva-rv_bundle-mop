@@ -1,7 +1,7 @@
 {
   "name": "bundle-mop-action",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "GitHub Action wrapper for Bundle Mop. Bundled into dist/index.mjs (committed) and run by /action.yml.",
   "license": "MIT",
   "type": "module",
