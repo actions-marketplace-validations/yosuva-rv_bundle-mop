@@ -26,7 +26,7 @@ answers three questions:
 
 <p align="center">
   <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">
-    <img src="docs/assets/pr-comment.png" width="640" alt="A Bundle Mop comment on a pull request: the home page grew by 61.8 kB, a size budget was exceeded, and the import chain shows moment coming in through a use-client component">
+    <img src="docs/assets/pr-comment.png" width="640" alt="A Bundle Mop comment on a pull request: a size budget was exceeded because the home page grew by 61.8 kB. A suggestion says to split the moment code out of the use-client component LastUpdated.tsx and lazy-load it, and a graph shows the import chain from app/page.tsx (Server Component) through LastUpdated.tsx (use client) to moment.js (+61.3 kB)">
   </a>
   <br>
   <sub>A real comment from the <a href="https://github.com/yosuva-rv/bundle-mop-demo">demo app</a>: <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">adding moment</a> · <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/2">lazy-loading a chart (−363 kB)</a></sub>
