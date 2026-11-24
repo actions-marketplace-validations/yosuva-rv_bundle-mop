@@ -5,7 +5,7 @@ are versioned together. Until 1.0, minor versions may change output formats and 
 
 ## Unreleased
 
-Fixes from running Bundle Mop on real open-source apps (shadcn/ui, Dify, Cal.com):
+Fixes from running Bundle Mop on real open-source apps (shadcn/ui and Dify):
 
 - **Crash on API routes fixed.** Route handlers (`app/**/route.ts`) export an entry without `entry_kind`; one such
   route made the whole run fail. Unknown extra fields (like `client_references`) are ignored. Errors now say where
