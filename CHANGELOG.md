@@ -3,7 +3,7 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.2.1 (2026-11-24)
 
 Fixes from running Bundle Mop on real open-source apps (shadcn/ui and Dify):
 

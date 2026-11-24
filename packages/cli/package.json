@@ -1,6 +1,6 @@
 {
   "name": "bundle-mop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Explains every PR's Next.js bundle change: which import, through which chain, and how to fix it.",
   "keywords": [
     "nextjs",
