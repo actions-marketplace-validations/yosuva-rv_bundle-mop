@@ -217,3 +217,98 @@ describe('rules: synthetic cases', () => {
     expect(f).toEqual([{ ruleId: 'custom', severity: 'error', title: '/', message: '', subject: 's', bytes: 1, routes: ['/'] }]);
   });
 });
+
+// --- graph-aware suggestions (found by applying a suggestion to Dify) ------------------------------------
+
+/** page → Widget ("use client") → whatever `edges` say. Keys are app paths like `components/Panel.tsx`. */
+function clientGraph(edges: Record<string, { sync?: string[]; async?: string[] }>): FakeGraph {
+  const id = (p: string) => (p.startsWith('[project]') ? ident(p) : ident(`[project]/${p}`));
+  const g = widgetGraph([]);
+  g.modules = g.modules.filter((m) => m.ident !== compClient);
+  const all = new Set([compClient, ...Object.keys(edges).map(id), ...Object.values(edges).flatMap((e) => [...(e.sync ?? []), ...(e.async ?? [])].map(id))]);
+  for (const m of all) {
+    const e = Object.entries(edges).find(([k]) => id(k) === m)?.[1];
+    g.modules.push({ ident: m, sync: (e?.sync ?? []).map(id), async: (e?.async ?? []).map(id) });
+  }
+  return g;
+}
+
+describe('rules: lazy-load-candidate picks the file that really removes the package', () => {
+  const lib = pnpm('rich-editor', '1.0.0', 'dist/index.js');
+  const part = (p: string, size: number, lazy = false) => ({ path: p.startsWith('[project]') ? p : `[project]/${p}`, size, lazy });
+
+  it('wraps the shared parent when two sibling files import the package, lists every importer, and estimates the saving (the Dify note-node case)', () => {
+    const graph = clientGraph({
+      'components/Widget.tsx': { sync: ['components/Panel.tsx', 'components/Sidebar.tsx'] },
+      'components/Sidebar.tsx': { sync: ['components/Panel.tsx'] },
+      'components/Panel.tsx': { sync: ['components/panel/context.tsx', 'components/panel/Toolbar.tsx'] },
+      'components/panel/context.tsx': { sync: [lib] },
+      'components/panel/Toolbar.tsx': { sync: [lib] },
+    });
+    const pr = snap('p', [basePart, part('components/Sidebar.tsx', 500), part('components/Panel.tsx', 1_000), part('components/panel/context.tsx', 2_000), part('components/panel/Toolbar.tsx', 1_000), part(lib, 50_000)], graph);
+    const f = findingsFor(snap('b', [basePart, part('components/Sidebar.tsx', 500)]), pr).find((x) => x.ruleId === 'lazy-load-candidate');
+    expect(f?.title).toBe('Lazy-load components/Panel.tsx to keep rich-editor out of first-load JS');
+    expect(f?.chain?.importer).toBe('app:components/panel/context.tsx'); // the chain still shows where it enters
+    expect(f?.suggestion).toContain('That moves about 54.0 kB out of first-load JS'); // Panel + context + Toolbar + lib, not Sidebar
+    expect(f?.suggestion).toContain("// components/Widget.tsx\nimport dynamic from 'next/dynamic';\nconst Panel = dynamic(() => import('./Panel'));");
+    expect(f?.suggestion).toContain('Change the import in each file that imports it: components/Widget.tsx, components/Sidebar.tsx.');
+    expect(f?.suggestion).toContain('for a named export use');
+  });
+
+  it('says so when no single file below the "use client" boundary removes the package', () => {
+    const graph = clientGraph({
+      'components/Widget.tsx': { sync: ['components/Editor.tsx', 'components/Other.tsx'] },
+      'components/Editor.tsx': { sync: [lib] },
+      'components/Other.tsx': { sync: [lib] },
+    });
+    const pr = snap('p', [basePart, part('components/Editor.tsx', 1_000), part('components/Other.tsx', 1_000), part(lib, 50_000)], graph);
+    const f = findingsFor(snap('b', [basePart]), pr).find((x) => x.ruleId === 'lazy-load-candidate');
+    expect(f?.title).toBe('Lazy-load the code that uses rich-editor to keep it out of first-load JS');
+    expect(f?.suggestion).toContain('No single file removes it from this route: 2 files import it statically (components/Editor.tsx, components/Other.tsx).');
+    expect(f?.suggestion).not.toContain('That moves about');
+    expect(f?.suggestion).not.toContain('```'); // no guessed snippet
+  });
+});
+
+describe('rules: lost-lazy-loading tells an import change from a chunking change', () => {
+  const chart = '[project]/components/Chart.tsx';
+
+  it('blames an import when the code became statically reachable', () => {
+    const base = snap('b', [basePart, { path: chart, size: 40_000, lazy: true }], clientGraph({ 'components/Widget.tsx': { async: [chart] } }));
+    const pr = snap('p', [basePart, { path: chart, size: 40_000 }], clientGraph({ 'components/Widget.tsx': { sync: [chart] } }));
+    const f = findingsFor(base, pr).find((x) => x.ruleId === 'lost-lazy-loading');
+    expect(f).toMatchObject({ severity: 'warning' });
+    expect(f?.message).toContain('now a static import pulls it into first-load JS');
+  });
+
+  it('says no import changed when the code is still only dynamically imported (the Dify chunking case)', () => {
+    const graph = clientGraph({ 'components/Widget.tsx': { async: [chart] } });
+    const base = snap('b', [basePart, { path: chart, size: 40_000, lazy: true }], graph);
+    const pr = snap('p', [basePart, { path: chart, size: 40_000 }], graph);
+    const f = findingsFor(base, pr).find((x) => x.ruleId === 'lost-lazy-loading');
+    expect(f).toMatchObject({ severity: 'info', title: 'components/Chart.tsx moved from lazy to first-load JS (+40.0 kB)' });
+    expect(f?.message).toContain('No import change explains this: components/Chart.tsx is still only loaded with a dynamic import.');
+    expect(f?.message).not.toContain('static import pulls');
+  });
+});
+
+describe('rules: chunking drift (same files, same static imports, more up-front copies)', () => {
+  const mods = Array.from({ length: 12 }, (_, i) => pnpm('some-icons', '1.0.0', `icons/i${i}.js`));
+  const index = pnpm('some-icons', '1.0.0', 'index.js');
+  const graph = (edge: 'sync' | 'async') => {
+    const g = clientGraph({ 'components/Widget.tsx': { [edge]: [index] }, [index]: { sync: mods } });
+    return g;
+  };
+  const parts = (size: number) => [index, ...mods].map((path) => ({ path, size }));
+
+  it('stays quiet when a package only grew because chunks were re-split (the Dify es-toolkit case)', () => {
+    const f = findingsFor(snap('b', [basePart, ...parts(500)], graph('sync')), snap('p', [basePart, ...parts(700)], graph('sync')));
+    expect(ids(f)).not.toContain('optimize-package-imports');
+  });
+
+  it('still flags it when the package became statically imported', () => {
+    const base = snap('b', [basePart, ...parts(500).map((p) => ({ ...p, lazy: true }))], graph('async'));
+    const f = findingsFor(base, snap('p', [basePart, ...parts(500)], graph('sync')));
+    expect(ids(f)).toContain('optimize-package-imports');
+  });
+});

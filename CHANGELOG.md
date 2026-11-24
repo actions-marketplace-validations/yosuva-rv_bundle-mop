@@ -3,6 +3,20 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
+## Unreleased
+
+Found by applying a Bundle Mop suggestion to Dify and measuring the result (it saved 210 kB):
+
+- **`lazy-load-candidate` wraps the right file.** It now picks the deepest file that every static path to the package
+  goes through, lists every file that imports it, and estimates the saving ("moves about 61.6 kB out of first-load
+  JS"). Before, it named the file that imports the package, which on Dify exported a React context, not a component.
+  When no single file removes the package, it lists the files that import it instead of guessing a snippet.
+- **`lost-lazy-loading` no longer blames an import that didn't change.** When code moved into first-load JS only
+  because the bundler re-split chunks, the finding says so (info, not warning).
+- **No suggestions for chunking drift:** packages that grew only because of extra copies in up-front chunks (same
+  version, same files, same static imports) are not flagged, like compiler drift after a Next.js upgrade.
+- PR comment: the `lazy-load-candidate` text changed (golden file updated).
+
 ## 0.2.1 (2026-11-24)
 
 Fixes from running Bundle Mop on real open-source apps (shadcn/ui and Dify):

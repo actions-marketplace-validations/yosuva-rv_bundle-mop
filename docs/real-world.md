@@ -47,6 +47,47 @@ Bugs this run found:
 Timing: a first run took 12 min 45 s (two production builds). The next run reused the cached base analysis and took
 1 min 15 s, about 45 s of which was `next analyze` on the branch.
 
+### Does the suggestion actually work?
+
+We applied the suggestion to Dify and measured it with `bundle-mop compare --base HEAD`.
+
+**The snippet was wrong; the idea was right.** Bundle Mop proposed `dynamic(() => import('./note-editor/context'))`.
+Pasted as-is, that breaks the app: the file's default export is a React context, not a component, and the editor and
+toolbar files next to it import Lexical too. We applied the intent instead: we lazy-loaded the whole note node at the
+two places the workflow editor mounts it.
+
+```tsx
+import dynamic from 'next/dynamic'
+// Lazy: notes pull in the Lexical editor, and most workflows have no notes.
+const CustomNoteNode = dynamic(() => import('./note-node'))
+```
+
+| Routes | First-load JS |
+| --- | --- |
+| Workflow editor, pipeline and snippet editor (3 routes) | **−205 to −210 kB (−6%)**, e.g. 3.46 MB → 3.25 MB |
+| 11 other routes (`/datasets`, `/agents/*`, `/app/[appId]/configuration`, …) | +12 to +26 kB (+0.3% to +1.9%) |
+| The other 78 routes | under 1 kB |
+
+The saving is 3.6× what the suggestion predicted (58 kB): Lexical, its plugins and the note editor all left the
+first load. The growth elsewhere comes from Turbopack's chunking. No import on those routes changed. One new async
+boundary changed how shared code is split into chunks, and some modules that used to load lazily now sit in chunks
+that load up front.
+
+What this taught us, and what we changed (after 0.2.1):
+
+- **The snippet named the wrong file.** `lazy-load-candidate` named the file that imports the package. Now it looks for
+  the deepest file that every static import of the package goes through, and lists every file that imports it. On
+  this route there is no such file: 50 files import Lexical, including Dify's prompt editor. So Bundle Mop now says
+  that, lists the files, and doesn't guess a snippet. On our moment fixture it names the component to wrap and
+  estimates the saving (61.6 kB, exactly moment plus the component).
+- **Why the measured saving was bigger.** By static imports alone, lazy-loading the note node removes almost nothing:
+  Lexical is still needed elsewhere on the route. The 210 kB came from a duplicate copy of Lexical that Turbopack had
+  placed in a second up-front chunk. A static estimate can't predict that, so Bundle Mop doesn't claim to.
+- **Chunking isn't an import change.** On the 11 routes that grew, `lost-lazy-loading` said "a static import pulls
+  it into first-load JS". Now it checks static reachability in both branches. If nothing changed, it says the
+  bundler re-split chunks, as info. Packages that only grew from extra chunk copies (es-toolkit, @tanstack/hotkeys,
+  foxact) are no longer flagged.
+
 ## Cal.com
 
 The branch side (`next analyze` on main, 9.6 min) parsed without errors. The base checkout's `yarn install` was
@@ -65,6 +106,8 @@ bundle-mop compare --base <ref> --install-command "yarn install --immutable --mo
 - **Big apps are big.** Exports range from 200 MB to more than 512 MB, and `next analyze` takes 10–15 minutes on a
   laptop. Caching the base matters: repeat runs drop to about a minute.
 - **Framework upgrades need their own explanation.** Otherwise, every package looks like it changed.
+- **Measure the fix, not just the problem.** On Dify, Bundle Mop's suggestion pointed at the right feature and
+  saved 210 kB, but its code snippet needed rework, and the change moved a few kB onto other routes.
 - **Advice must be checked against how the app really imports things.** "Many modules from one package" is not the
   same as "a barrel import".
 - **Monorepos need setup.** Env vars, code generators (Prisma) and engine pins (Dify wants Node 24) all appear in

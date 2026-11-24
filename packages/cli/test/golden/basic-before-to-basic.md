@@ -34,13 +34,15 @@ Use dayjs (similar API), date-fns (tree-shakeable; optimized by Next by default)
 
 moment adds 61.3 kB to first-load JS. Imported by components/DatePicker.tsx.
 
-Load the component that uses moment with next/dynamic so it's fetched only when rendered.
+Load components/DatePicker.tsx with next/dynamic so it (and moment) is fetched only when it renders. That moves about 61.6 kB out of first-load JS on this route.
 
 ```tsx
 // components/DashboardClient.tsx
 import dynamic from 'next/dynamic';
 const DatePicker = dynamic(() => import('./DatePicker'));
 ```
+
+This assumes the file's default export is the component; for a named export use `import('…').then((m) => m.Name)`.
 
 [Docs](https://nextjs.org/docs/app/guides/lazy-loading)
 

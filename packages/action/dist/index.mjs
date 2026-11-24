@@ -1128,17 +1128,83 @@ var DOCS = {
   serverComponents: "https://nextjs.org/docs/app/getting-started/server-and-client-components"
 };
 
+// ../cli/src/rules/graph.ts
+var full = /* @__PURE__ */ new WeakMap();
+function staticReach(snap, route, without) {
+  const data = snap.routes.get(route);
+  if (!data) return void 0;
+  if (without === void 0) {
+    const hit = full.get(snap)?.get(route);
+    if (hit) return hit;
+  }
+  const out = { idents: /* @__PURE__ */ new Set(), keys: /* @__PURE__ */ new Set(), packages: /* @__PURE__ */ new Set() };
+  const queue = [];
+  const push = (id) => {
+    if (out.idents.has(id)) return;
+    const m = snap.modules.get(id);
+    if (without !== void 0 && m?.source.key === without) return;
+    out.idents.add(id);
+    queue.push(id);
+    if (m?.layer === "app-client") {
+      out.keys.add(m.source.key);
+      if (m.source.packageName) out.packages.add(m.source.packageName);
+    }
+  };
+  for (const e of data.entries) push(e.moduleIdent);
+  for (let i = 0; i < queue.length; i++) for (const n of snap.modules.get(queue[i])?.sync ?? []) push(n);
+  if (without === void 0) {
+    let byRoute = full.get(snap);
+    if (!byRoute) full.set(snap, byRoute = /* @__PURE__ */ new Map());
+    byRoute.set(route, out);
+  }
+  return out;
+}
+var known = /* @__PURE__ */ new WeakMap();
+function graphKnows(snap, keyOrPackage) {
+  let k = known.get(snap);
+  if (!k) {
+    k = { keys: /* @__PURE__ */ new Set(), packages: /* @__PURE__ */ new Set() };
+    for (const m of snap.modules.values()) {
+      if (m.layer !== "app-client") continue;
+      k.keys.add(m.source.key);
+      if (m.source.packageName) k.packages.add(m.source.packageName);
+    }
+    known.set(snap, k);
+  }
+  return isPackageRollup(keyOrPackage) ? k.packages.has(keyOrPackage.packageName) : k.keys.has(keyOrPackage.key);
+}
+function isStatic(reach, c) {
+  return isPackageRollup(c) ? reach.packages.has(c.packageName) : reach.keys.has(c.key);
+}
+function isPackageRollup(c) {
+  return !!c.packageName && c.key === `pkg:${c.packageName}`;
+}
+
 // ../cli/src/rules/rules.ts
 var grewFirstLoad = (c, min) => c.firstLoad.delta >= min;
 var packageKeys = (route, name) => new Set(route?.parts.filter((p) => p.isClient && p.source.packageName === name).map((p) => p.source.key));
 function isCompilerDrift(ctx, p) {
-  if (!ctx.compilerChanged || p.status !== "changed" || p.versions || !p.packageName) return false;
-  const before = packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName);
-  const after = packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName);
-  return before.size === after.size && [...after].every((k) => before.has(k));
+  return !!ctx.compilerChanged && sameFiles(ctx, p);
+}
+var sameSet2 = (a, b) => a.size === b.size && [...a].every((k) => b.has(k));
+function sameFiles(ctx, p) {
+  if (p.status !== "changed" || p.versions || !p.packageName) return false;
+  return sameSet2(packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName), packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName));
+}
+function staticPackageKeys(snap, route, name) {
+  if (!graphKnows(snap, { key: `pkg:${name}`, packageName: name })) return void 0;
+  const r = staticReach(snap, route);
+  return r && new Set([...r.keys].filter((k) => k.startsWith(`pkg:${name}/`)));
+}
+function isChunkingDrift(ctx, p) {
+  if (!sameFiles(ctx, p)) return false;
+  const name = p.packageName;
+  const before = staticPackageKeys(ctx.base, ctx.route.route, name);
+  const after = staticPackageKeys(ctx.pr, ctx.route.route, name);
+  return !!before && !!after && sameSet2(before, after);
 }
 var grownPackages = (ctx) => ctx.route.packages.filter(
-  (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p)
+  (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p) && !isChunkingDrift(ctx, p)
 );
 var entryCache = /* @__PURE__ */ new WeakMap();
 function packageEntries(snap) {
@@ -1182,6 +1248,54 @@ var importPath = (fromKey, toKey) => {
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
 };
+var staticReachable = (ctx, c) => {
+  const r = staticReach(ctx.base, ctx.route.route);
+  return !!r && isStatic(r, c);
+};
+function chunkingOnly(ctx, c) {
+  if (!graphKnows(ctx.base, c) || !graphKnows(ctx.pr, c)) return false;
+  const before = staticReach(ctx.base, ctx.route.route);
+  const after = staticReach(ctx.pr, ctx.route.route);
+  if (!before || !after) return false;
+  return isStatic(before, c) === isStatic(after, c);
+}
+function packageImporters(ctx, pkg) {
+  const all = staticReach(ctx.pr, ctx.route.route);
+  const out = /* @__PURE__ */ new Set();
+  for (const id of all?.idents ?? []) {
+    const m = ctx.pr.modules.get(id);
+    if (!m || m.layer !== "app-client" || m.source.kind !== "app" && m.source.kind !== "workspace") continue;
+    if (m.sync.some((d) => ctx.pr.modules.get(d)?.source.packageName === pkg)) out.add(m.source.key);
+  }
+  return [...out].sort();
+}
+function lazyTarget(ctx, pkg, chain) {
+  const route = ctx.route.route;
+  const all = staticReach(ctx.pr, route);
+  if (!all?.packages.has(pkg)) return void 0;
+  const steps = chain.steps;
+  const boundary = steps.findIndex((s) => s.isClientBoundary);
+  const importer = steps.findIndex((s) => s.key === chain.importer);
+  if (boundary < 0 || importer <= boundary) return void 0;
+  for (let i = importer; i > boundary; i--) {
+    const s = steps[i];
+    if (!s || s.kind !== "app" && s.kind !== "workspace") continue;
+    const without = staticReach(ctx.pr, route, s.key);
+    if (!without || without.packages.has(pkg)) continue;
+    const gone = new Set([...all.keys].filter((k) => !without.keys.has(k)));
+    const saves = (prRoute(ctx)?.parts ?? []).filter((p) => p.isClient && !p.isLazy && gone.has(p.source.key)).reduce((n, p) => n + p.size, 0);
+    const importers = /* @__PURE__ */ new Set();
+    for (const id of all.idents) {
+      const m = ctx.pr.modules.get(id);
+      if (!m || m.layer !== "app-client" || m.source.key === s.key || m.source.kind !== "app" && m.source.kind !== "workspace") continue;
+      if (m.sync.some((d) => ctx.pr.modules.get(d)?.source.key === s.key)) importers.add(m.source.key);
+    }
+    const parent = steps[i - 1]?.key;
+    const ordered = [...importers].sort((a, b) => Number(b === parent) - Number(a === parent) || a.localeCompare(b));
+    return { key: s.key, importers: ordered, saves };
+  }
+  return void 0;
+}
 var heavyPackage = {
   id: "heavy-package",
   description: "A known-heavy package was added to (or grew in) first-load JS; suggests a lighter alternative.",
@@ -1242,27 +1356,38 @@ var lazyLoadCandidate = {
     const out = [];
     for (const p of ctx.route.packages) {
       const chain = p.chain;
-      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p)) continue;
+      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p) || isChunkingDrift(ctx, p)) continue;
       if (!chain?.clientBoundary || chain.viaDynamicImport || !chain.importer) continue;
-      const steps = chain.steps;
-      const importerIdx = steps.findIndex((s) => s.key === chain.importer);
-      const parent = importerIdx > 0 ? steps[importerIdx - 1] : void 0;
-      const importer = chain.importer;
-      let suggestion = `Load the component that uses ${p.packageName} with next/dynamic so it's fetched only when rendered.`;
-      if (parent && (parent.kind === "app" || parent.kind === "workspace")) {
-        const name = componentName(importer);
-        suggestion += `
+      const target = lazyTarget(ctx, p.packageName, chain);
+      let suggestion;
+      if (target) {
+        const files = target.importers;
+        suggestion = `Load ${shortKey(target.key)} with next/dynamic so it (and ${p.packageName}) is fetched only when it renders.`;
+        if (target.saves > 0) suggestion += ` That moves about ${formatBytes(target.saves)} out of first-load JS on this route.`;
+        if (files[0]) {
+          suggestion += `
 
 \`\`\`tsx
-// ${shortKey(parent.key)}
+// ${shortKey(files[0])}
 import dynamic from 'next/dynamic';
-const ${name} = dynamic(() => import('${importPath(parent.key, importer)}'));
+const ${componentName(target.key)} = dynamic(() => import('${importPath(files[0], target.key)}'));
 \`\`\``;
+          if (files.length > 1) suggestion += `
+
+Change the import in each file that imports it: ${files.map(shortKey).join(", ")}.`;
+        }
+      } else {
+        const files = packageImporters(ctx, p.packageName).sort((a, b) => Number(b === chain.importer) - Number(a === chain.importer));
+        const shown = files.slice(0, 5).map(shortKey).join(", ");
+        suggestion = `Lazy-load the feature that uses ${p.packageName} with next/dynamic. No single file removes it from this route: ${files.length} files import it statically (${shown}${files.length > 5 ? ", \u2026" : ""}). Wrap the component that renders the ones you can defer, and measure.`;
       }
+      if (target) suggestion += `
+
+This assumes the file's default export is the component; for a named export use \`import('\u2026').then((m) => m.Name)\`.`;
       out.push({
         ruleId: this.id,
         severity: "info",
-        title: `Lazy-load ${shortKey(importer)} to keep ${p.packageName} out of first-load JS`,
+        title: target ? `Lazy-load ${shortKey(target.key)} to keep ${p.packageName} out of first-load JS` : `Lazy-load the code that uses ${p.packageName} to keep it out of first-load JS`,
         message: `${p.packageName} adds ${formatBytes(p.firstLoad.delta)} to first-load JS.${importedBy(chain)}`,
         suggestion,
         docs: DOCS.lazyLoading,
@@ -1360,10 +1485,21 @@ var lostLazyLoading = {
       if (c.movedTo !== "firstLoad" || c.firstLoad.delta < ctx.options.minBytes) continue;
       if (c.packageName && isFrameworkPackage(c.packageName)) continue;
       const label = c.packageName ?? shortKey(c.key);
-      const f = {
+      const title = `${label} moved from lazy to first-load JS (+${formatBytes(c.firstLoad.delta)})`;
+      const f = chunkingOnly(ctx, c) ? {
+        // The bytes are real, but no import explains them: blaming one would send people hunting for nothing.
+        ruleId: this.id,
+        severity: "info",
+        title,
+        message: `No import change explains this: ${label} ${staticReachable(ctx, c) ? "was already imported statically in the base branch" : "is still only loaded with a dynamic import"}. The bundler now puts a copy of it in a chunk this route loads up front. This is usually a side effect of a change elsewhere, such as a new next/dynamic import that changed how shared code is split.`,
+        suggestion: "Nothing to undo on this route. If the size matters, look at the next/dynamic changes in this PR.",
+        docs: DOCS.lazyLoading,
+        subject: c.key,
+        bytes: c.firstLoad.delta
+      } : {
         ruleId: this.id,
         severity: "warning",
-        title: `${label} moved from lazy to first-load JS (+${formatBytes(c.firstLoad.delta)})`,
+        title,
         message: `${label} was loaded with a dynamic import in the base branch; now a static import pulls it into first-load JS.${importedBy(c.chain)}`,
         suggestion: "Check whether a next/dynamic wrapper was removed or a new static import was added along the chain below.",
         docs: DOCS.lazyLoading,
