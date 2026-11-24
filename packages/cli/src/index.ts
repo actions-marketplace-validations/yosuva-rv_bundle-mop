@@ -14,7 +14,7 @@ export * from './capture/index.js';
 export { analyze } from './pipeline.js';
 export type { Analysis, AnalysisOptions } from './pipeline.js';
 export { formatBytes, formatDelta, renderTextDiff } from './report/text.js';
-export { COMMENT_MARKER, formatChainMarkdown, renderMarkdown } from './report/markdown.js';
+export { COMMENT_MARKER, formatChainMarkdown, formatChainMermaid, renderMarkdown } from './report/markdown.js';
 export type { MarkdownOptions } from './report/markdown.js';
 export type { CommandResult } from './commands/shared.js';
 

@@ -1621,6 +1621,37 @@ function formatChainMarkdown(chain) {
     return `${code(shortKey(s.key))}${tags.length ? ` (${tags.join(", ")})` : ""}`;
   }).join(" \u2192 ");
 }
+var mermaidText = (s) => s.replace(/#/g, "#35;").replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+var nodeLabel = (key) => {
+  const parts = shortKey(key).split("/");
+  return parts.length > 3 ? `\u2026/${parts.slice(-3).join("/")}` : parts.join("/");
+};
+function formatChainMermaid(chain, targetNote) {
+  const lines = ["```mermaid", `flowchart ${chain.steps.length <= 4 ? "LR" : "TD"}`];
+  const classes = { server: [], client: [], pkg: [] };
+  chain.steps.forEach((s, i) => {
+    const last = i === chain.steps.length - 1;
+    const tags = [];
+    if (s.isServerComponent) tags.push("Server Component");
+    if (s.isClientBoundary) tags.push('"use client"');
+    if (s.isBarrel) tags.push("barrel");
+    if (last && targetNote) tags.push(targetNote);
+    const label = [nodeLabel(s.key), ...tags].map(mermaidText).join("<br/>");
+    lines.push(`  n${i}["${label}"]`);
+    if (i > 0) lines.push(s.viaDynamicImport ? `  n${i - 1} -. dynamic import .-> n${i}` : `  n${i - 1} --> n${i}`);
+    if (last && s.packageName) classes.pkg.push(`n${i}`);
+    else if (s.isClientBoundary) classes.client.push(`n${i}`);
+    else if (s.isServerComponent) classes.server.push(`n${i}`);
+  });
+  lines.push(
+    "  classDef server fill:#e0e7ff,stroke:#4f46e5,color:#111827",
+    "  classDef client fill:#fef3c7,stroke:#d97706,color:#111827",
+    "  classDef pkg fill:#fee2e2,stroke:#dc2626,color:#111827"
+  );
+  for (const [name, ids] of Object.entries(classes)) if (ids.length) lines.push(`  class ${ids.join(",")} ${name}`);
+  lines.push("```");
+  return lines.join("\n");
+}
 function headline(diff, shown, findings, min) {
   const nSug = findings.length;
   const sug = nSug ? ` \xB7 ${nSug} suggestion${nSug === 1 ? "" : "s"}` : "";
@@ -1689,7 +1720,7 @@ function findingBody(f) {
   if (f.docs) lines.push(`[Docs](${f.docs})`, "");
   return lines;
 }
-function findingGroup(group, withChain) {
+function findingGroup(group, withChain, open = false) {
   const [head, ...rest] = group;
   const lines = [`#### ${SEVERITY_ICON[head.severity]} ${head.title}`, `<sub>${head.ruleId} \xB7 ${routeList(head.routes)}</sub>`, "", ...findingBody(head)];
   for (const f of rest) {
@@ -1697,7 +1728,10 @@ function findingGroup(group, withChain) {
     lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}** <sub>${f.ruleId}${routes}</sub>`, "", ...findingBody(f));
   }
   const chain = group.find((f) => f.chain && f.chain.steps.length > 1)?.chain;
-  if (withChain && chain) lines.push("<details><summary>Import chain</summary>", "", formatChainMarkdown(chain), "", "</details>", "");
+  if (withChain && chain) {
+    const note = head.bytes > 0 ? `+${formatBytes(head.bytes)}` : void 0;
+    lines.push(`<details${open ? " open" : ""}><summary>Import chain</summary>`, "", formatChainMermaid(chain, note), "", formatChainMarkdown(chain), "", "</details>", "");
+  }
   return lines;
 }
 function groupBySubject(findings) {
@@ -1786,7 +1820,7 @@ function render(diff, options, detail) {
   }
   if (findings.length && detail !== "minimal") {
     out.push("### Suggestions", "");
-    for (const g of groupBySubject(findings)) out.push(...findingGroup(g, detail === "full"));
+    groupBySubject(findings).forEach((g, i) => out.push(...findingGroup(g, detail === "full", i === 0)));
   } else if (findings.length) {
     out.push("### Suggestions", "", ...findings.slice(0, 20).map((f) => `- ${SEVERITY_ICON[f.severity]} ${f.title} <sub>(${f.ruleId})</sub>`), "");
   }

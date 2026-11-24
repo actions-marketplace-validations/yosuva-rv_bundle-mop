@@ -3,6 +3,14 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
+## Unreleased
+
+- **Import chain graph in the PR comment.** Each suggestion's import chain is drawn as a Mermaid flowchart (GitHub
+  renders it in comments and job summaries): the Server Component page, the `"use client"` boundary and the package are
+  colored, dynamic imports are dashed, and the package shows its size. The worst suggestion's chain is open. The text
+  chain stays under the graph. `formatChainMermaid` is exported from the library.
+- PR comment format changed (golden file updated).
+
 ## 0.2.2 (2026-11-24)
 
 Found by applying a Bundle Mop suggestion to Dify and measuring the result (it saved 210 kB):

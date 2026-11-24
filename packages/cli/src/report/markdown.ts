@@ -65,6 +65,47 @@ export function formatChainMarkdown(chain: ImportChain): string {
     .join(' → ');
 }
 
+/** Text inside a quoted Mermaid label: quotes and `#` are entities, angle brackets can't open tags. */
+const mermaidText = (s: string) => s.replace(/#/g, '#35;').replace(/"/g, '#quot;').replace(/</g, '#lt;').replace(/>/g, '#gt;');
+
+/** Long paths keep their last three segments; the text chain under the graph has the full path. */
+const nodeLabel = (key: string) => {
+  const parts = shortKey(key).split('/');
+  return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : parts.join('/');
+};
+
+/**
+ * The import chain as a Mermaid flowchart (GitHub renders it in comments and job summaries). `targetNote`, e.g.
+ * `+61.3 kB`, goes on the last node. Short chains read left to right, long ones top down.
+ */
+export function formatChainMermaid(chain: ImportChain, targetNote?: string): string {
+  const lines = ['```mermaid', `flowchart ${chain.steps.length <= 4 ? 'LR' : 'TD'}`];
+  const classes: Record<'server' | 'client' | 'pkg', string[]> = { server: [], client: [], pkg: [] };
+  chain.steps.forEach((s, i) => {
+    const last = i === chain.steps.length - 1;
+    const tags: string[] = [];
+    if (s.isServerComponent) tags.push('Server Component');
+    if (s.isClientBoundary) tags.push('"use client"');
+    if (s.isBarrel) tags.push('barrel');
+    if (last && targetNote) tags.push(targetNote);
+    const label = [nodeLabel(s.key), ...tags].map(mermaidText).join('<br/>');
+    lines.push(`  n${i}["${label}"]`);
+    if (i > 0) lines.push(s.viaDynamicImport ? `  n${i - 1} -. dynamic import .-> n${i}` : `  n${i - 1} --> n${i}`);
+    if (last && s.packageName) classes.pkg.push(`n${i}`);
+    else if (s.isClientBoundary) classes.client.push(`n${i}`);
+    else if (s.isServerComponent) classes.server.push(`n${i}`);
+  });
+  // Dark text on light fills: readable in GitHub's light and dark themes alike.
+  lines.push(
+    '  classDef server fill:#e0e7ff,stroke:#4f46e5,color:#111827',
+    '  classDef client fill:#fef3c7,stroke:#d97706,color:#111827',
+    '  classDef pkg fill:#fee2e2,stroke:#dc2626,color:#111827',
+  );
+  for (const [name, ids] of Object.entries(classes)) if (ids.length) lines.push(`  class ${ids.join(',')} ${name}`);
+  lines.push('```');
+  return lines.join('\n');
+}
+
 // --- sections -----------------------------------------------------------------
 
 function headline(diff: SnapshotDiff, shown: RouteDiff[], findings: Finding[], min: number): string {
@@ -154,7 +195,7 @@ function findingBody(f: Finding): string[] {
 }
 
 /** Findings about the same subject (e.g. `pkg:moment`) share one heading and one import chain. */
-function findingGroup(group: Finding[], withChain: boolean): string[] {
+function findingGroup(group: Finding[], withChain: boolean, open = false): string[] {
   const [head, ...rest] = group as [Finding, ...Finding[]];
   const lines = [`#### ${SEVERITY_ICON[head.severity]} ${head.title}`, `<sub>${head.ruleId} · ${routeList(head.routes)}</sub>`, '', ...findingBody(head)];
   for (const f of rest) {
@@ -162,7 +203,10 @@ function findingGroup(group: Finding[], withChain: boolean): string[] {
     lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}** <sub>${f.ruleId}${routes}</sub>`, '', ...findingBody(f));
   }
   const chain = group.find((f) => f.chain && f.chain.steps.length > 1)?.chain;
-  if (withChain && chain) lines.push('<details><summary>Import chain</summary>', '', formatChainMarkdown(chain), '', '</details>', '');
+  if (withChain && chain) {
+    const note = head.bytes > 0 ? `+${formatBytes(head.bytes)}` : undefined;
+    lines.push(`<details${open ? ' open' : ''}><summary>Import chain</summary>`, '', formatChainMermaid(chain, note), '', formatChainMarkdown(chain), '', '</details>', '');
+  }
   return lines;
 }
 
@@ -268,7 +312,8 @@ function render(diff: SnapshotDiff, options: MarkdownOptions, detail: 'full' | '
 
   if (findings.length && detail !== 'minimal') {
     out.push('### Suggestions', '');
-    for (const g of groupBySubject(findings)) out.push(...findingGroup(g, detail === 'full'));
+    // The worst suggestion's chain is open: the graph is the quickest way to see why.
+    groupBySubject(findings).forEach((g, i) => out.push(...findingGroup(g, detail === 'full', i === 0)));
   } else if (findings.length) {
     out.push('### Suggestions', '', ...findings.slice(0, 20).map((f) => `- ${SEVERITY_ICON[f.severity]} ${f.title} <sub>(${f.ruleId})</sub>`), '');
   }
