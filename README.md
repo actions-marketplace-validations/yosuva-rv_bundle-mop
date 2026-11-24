@@ -32,6 +32,9 @@ answers three questions:
   <sub>A real comment from the <a href="https://github.com/yosuva-rv/bundle-mop-demo">demo app</a>: <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">adding moment</a> · <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/2">lazy-loading a chart (−363 kB)</a></sub>
 </p>
 
+**Tested on real apps:** shadcn/ui and Dify. On Dify, following its suggestion cut 210 kB from the workflow editor's
+first load. [See the results](docs/real-world.md), including what it got wrong and how we fixed it.
+
 ## Quick start
 
 Add this file to your repository and open a pull request. That's it.
@@ -121,6 +124,7 @@ can be up to ~2× too high, so they're shown as estimates and never used for bud
 ## Learn more
 
 - [GitHub Action: inputs, outputs, forks and security](docs/action.md)
+- [Results on real apps (shadcn/ui, Dify)](docs/real-world.md)
 - [Budgets](docs/budgets.md) · [Rules](docs/rules.md) · [How the analyzer data works](docs/analyze-format.md)
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
