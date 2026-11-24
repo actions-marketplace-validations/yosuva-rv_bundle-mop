@@ -1,13 +1,12 @@
 # Bundle Mop on real apps
 
 Before launch we ran `bundle-mop compare` on real pull requests in large open-source Next.js 16.4+ apps. The goal was
-to find what breaks outside our fixtures. Every bug we found is fixed in 0.2.1.
+to find what breaks outside our fixtures. Every bug we found is fixed in 0.2.1 and 0.2.2.
 
 | App | Size | PR tested | Result |
 | --- | --- | --- | --- |
 | [shadcn/ui](https://github.com/shadcn-ui/ui) (`apps/v4`) | 33 routes, ~24,000 modules, ~200 MB export | Next.js 16.4.2 → 16.4.5 | ✅ correct report, 0 false suggestions |
 | [Dify](https://github.com/langgenius/dify) (`web`) | 92 routes, export over 512 MB | Lexical editor 0.47 → 0.53 | ✅ found a real +67 kB regression and why |
-| [Cal.com](https://github.com/calcom/cal.com) (`apps/web`) | the largest of the three | Next.js 16.4.3 → main | ⚠️ PR side analyzed fine; the base install failed on our test machine |
 
 ## shadcn/ui: a Next.js patch upgrade
 
@@ -88,19 +87,6 @@ What this taught us, and what we changed (after 0.2.1):
   bundler re-split chunks, as info. Packages that only grew from extra chunk copies (es-toolkit, @tanstack/hotkeys,
   foxact) are no longer flagged.
 
-## Cal.com
-
-The branch side (`next analyze` on main, 9.6 min) parsed without errors. The base checkout's `yarn install` was
-interrupted on our Windows test machine, which ran out of resources. That is not a Bundle Mop issue, but it means we
-have no full Cal.com report yet.
-
-Setup notes for anyone who tries it: Cal.com needs placeholder env vars at build time (`NEXTAUTH_SECRET`,
-`CALENDSO_ENCRYPTION_KEY`, `NEXTAUTH_URL`, `NEXT_PUBLIC_WEBSITE_URL`, `EMAIL_FROM`) and a generated Prisma client:
-
-```sh
-bundle-mop compare --base <ref> --install-command "yarn install --immutable --mode=skip-build && yarn workspace @calcom/prisma prisma generate"
-```
-
 ## What we learned
 
 - **Big apps are big.** Exports range from 200 MB to more than 512 MB, and `next analyze` takes 10–15 minutes on a
@@ -110,5 +96,5 @@ bundle-mop compare --base <ref> --install-command "yarn install --immutable --mo
   saved 210 kB, but its code snippet needed rework, and the change moved a few kB onto other routes.
 - **Advice must be checked against how the app really imports things.** "Many modules from one package" is not the
   same as "a barrel import".
-- **Monorepos need setup.** Env vars, code generators (Prisma) and engine pins (Dify wants Node 24) all appear in
-  `--install-command`. The Action and the CLI accept one.
+- **Monorepos need setup.** Install flags and engine pins (Dify wants Node 24) go in `--install-command`. The Action
+  and the CLI both accept one.
