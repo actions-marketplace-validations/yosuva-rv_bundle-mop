@@ -3,7 +3,7 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.3.1 (2026-11-24)
 
 - `lazy-load-candidate`: when the `"use client"` file imports the package itself, it now says to split that code into a
   child component and lazy-load it, instead of the contradictory "No single file removes it: 1 files import it"

@@ -18,7 +18,7 @@ export { COMMENT_MARKER, formatChainMarkdown, formatChainMermaid, renderMarkdown
 export type { MarkdownOptions } from './report/markdown.js';
 export type { CommandResult } from './commands/shared.js';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export const HELP = `bundle-mop v${VERSION}
 
