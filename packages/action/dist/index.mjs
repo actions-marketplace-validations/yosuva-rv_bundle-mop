@@ -1882,7 +1882,7 @@ Diffs two saved \`next analyze export\` files. To compare your branch with main 
 ${REPORT_USAGE}`;
 
 // ../cli/src/index.ts
-var VERSION = "0.2.2";
+var VERSION = "0.3.0";
 var HELP = `bundle-mop v${VERSION}
 
 Explains every PR's Next.js bundle change: which import, through which chain,
