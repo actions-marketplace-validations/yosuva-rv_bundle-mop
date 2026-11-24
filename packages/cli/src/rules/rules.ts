@@ -264,6 +264,7 @@ export const lazyLoadCandidate: Rule = {
 
       const target = lazyTarget(ctx, p.packageName, chain);
       let suggestion: string;
+      let splitFrom: string | undefined;
       if (target) {
         // Every static path to the package goes through `target`: lazy-loading it removes the package from first load.
         const files = target.importers;
@@ -278,7 +279,14 @@ export const lazyLoadCandidate: Rule = {
         // The chain's own importer first, so the list starts where the report's chain ends.
         const files = packageImporters(ctx, p.packageName).sort((a, b) => Number(b === chain.importer) - Number(a === chain.importer));
         const shown = files.slice(0, 5).map(shortKey).join(', ');
-        suggestion = `Lazy-load the feature that uses ${p.packageName} with next/dynamic. No single file removes it from this route: ${files.length} files import it statically (${shown}${files.length > 5 ? ', …' : ''}). Wrap the component that renders the ones you can defer, and measure.`;
+        if (files.length === 1 && files[0] === chain.clientBoundary) {
+          // The "use client" file imports the package itself (the demo's LastUpdated.tsx → moment): there is
+          // nothing below it to wrap, so the package code has to move into its own component first.
+          splitFrom = files[0];
+          suggestion = `The "use client" file ${shortKey(files[0])} imports ${p.packageName} itself. Move the code that uses ${p.packageName} into a child component, and load that with next/dynamic inside ${shortKey(files[0])}, so ${p.packageName} is fetched only when that part renders.`;
+        } else {
+          suggestion = `Lazy-load the feature that uses ${p.packageName} with next/dynamic. No single file removes it from this route: ${files.length} ${files.length === 1 ? 'file imports' : 'files import'} it statically (${shown}${files.length > 5 ? ', …' : ''}). Wrap the component that renders the ones you can defer, and measure.`;
+        }
       }
       if (target) suggestion += `\n\nThis assumes the file's default export is the component; for a named export use \`import('…').then((m) => m.Name)\`.`;
       out.push({
@@ -286,7 +294,9 @@ export const lazyLoadCandidate: Rule = {
         severity: 'info',
         title: target
           ? `Lazy-load ${shortKey(target.key)} to keep ${p.packageName} out of first-load JS`
-          : `Lazy-load the code that uses ${p.packageName} to keep it out of first-load JS`,
+          : splitFrom
+            ? `Split the ${p.packageName} code out of ${shortKey(splitFrom)} and lazy-load it`
+            : `Lazy-load the code that uses ${p.packageName} to keep it out of first-load JS`,
         message: `${p.packageName} adds ${formatBytes(p.firstLoad.delta)} to first-load JS.${importedBy(chain)}`,
         suggestion,
         docs: DOCS.lazyLoading,

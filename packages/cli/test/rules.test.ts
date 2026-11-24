@@ -312,3 +312,15 @@ describe('rules: chunking drift (same files, same static imports, more up-front 
     expect(ids(f)).toContain('optimize-package-imports');
   });
 });
+
+describe('rules: lazy-load-candidate when the "use client" file imports the package itself (the demo case)', () => {
+  it('says to split the package code into a child component, not "no single file"', () => {
+    const lib = pnpm('moment', '2.30.1', 'moment.js');
+    const pr = snap('p', [basePart, { path: lib, size: 61_000 }], widgetGraph([ident(lib)]));
+    const f = findingsFor(snap('b', [basePart]), pr).find((x) => x.ruleId === 'lazy-load-candidate');
+    expect(f?.title).toBe('Split the moment code out of components/Widget.tsx and lazy-load it');
+    expect(f?.suggestion).toContain('The "use client" file components/Widget.tsx imports moment itself.');
+    expect(f?.suggestion).not.toContain('No single file');
+    expect(f?.suggestion).not.toContain('1 files');
+  });
+});
