@@ -10,6 +10,9 @@ A CLI for **Next.js 16.4+** (App Router, Turbopack). It diffs two `next analyze 
 JS changes, traces the import chain behind each regression, checks per-route budgets, and suggests fixes through a
 deterministic rules engine. No AI and no network calls.
 
+Tested on real apps (shadcn/ui, Dify). On Dify, following its suggestion cut 210 kB from the workflow editor's first
+load: [results](https://github.com/yosuva-rv/bundle-mop/blob/main/docs/real-world.md).
+
 ```sh
 # inside your Next.js app, on your branch: compares with main, like a pull request
 npx bundle-mop compare

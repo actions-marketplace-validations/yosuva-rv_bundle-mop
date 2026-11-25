@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AdapterError, parseNextAnalyzeExport } from '../src/adapter/index.js';
+import { AdapterError, bufferLines, parseNextAnalyzeExport } from '../src/adapter/index.js';
 import type { AnalyzeSnapshot, ModuleNode } from '../src/adapter/index.js';
 import { loadSnapshot, readExport } from './helpers/fixtures.js';
 
@@ -150,5 +150,21 @@ describe('adapter: validation', () => {
     const cut = full.slice(0, full.indexOf('{"type":"route","route":"/dashboard"'));
     const snap = parseNextAnalyzeExport(cut);
     expect(snap.warnings.some((w) => /meta says 4 route\(s\) but 3/.test(w))).toBe(true);
+  });
+});
+
+describe('adapter: byte input (exports bigger than a V8 string)', () => {
+  it('parses bytes exactly like text', () => {
+    const text = readExport('dynamic-barrel');
+    expect(parseNextAnalyzeExport(Buffer.from(text, 'utf8'))).toEqual(parseNextAnalyzeExport(text));
+  });
+
+  it('splits bytes into the same lines as text, multi-byte characters included', () => {
+    for (const text of ['a\nb', 'a\nb\n', '', '\n', 'é→\n✓ü\n\n𝄞', 'x\r\ny']) {
+      expect([...bufferLines(Buffer.from(text, 'utf8'))]).toEqual(text.split('\n'));
+    }
+    // a plain Uint8Array view (not a Buffer) works too
+    const bytes = new TextEncoder().encode('ab\ncd');
+    expect([...bufferLines(bytes.subarray(1))]).toEqual(['b', 'cd']);
   });
 });

@@ -34,13 +34,15 @@ Use dayjs (similar API), date-fns (tree-shakeable; optimized by Next by default)
 
 moment adds 61.3 kB to first-load JS. Imported by components/DatePicker.tsx.
 
-Load the component that uses moment with next/dynamic so it's fetched only when rendered.
+Load components/DatePicker.tsx with next/dynamic so it (and moment) is fetched only when it renders. That moves about 61.6 kB out of first-load JS on this route.
 
 ```tsx
 // components/DashboardClient.tsx
 import dynamic from 'next/dynamic';
 const DatePicker = dynamic(() => import('./DatePicker'));
 ```
+
+This assumes the file's default export is the component; for a named export use `import('…').then((m) => m.Name)`.
 
 [Docs](https://nextjs.org/docs/app/guides/lazy-loading)
 
@@ -52,7 +54,24 @@ If the moment work only formats or parses data, do it in a Server Component and 
 
 [Docs](https://nextjs.org/docs/app/getting-started/server-and-client-components)
 
-<details><summary>Import chain</summary>
+<details open><summary>Import chain</summary>
+
+```mermaid
+flowchart LR
+  n0["app/dashboard/page.tsx<br/>Server Component"]
+  n1["components/DashboardClient.tsx<br/>#quot;use client#quot;"]
+  n0 --> n1
+  n2["components/DatePicker.tsx"]
+  n1 --> n2
+  n3["moment/moment.js<br/>+61.3 kB"]
+  n2 --> n3
+  classDef server fill:#e0e7ff,stroke:#4f46e5,color:#111827
+  classDef client fill:#fef3c7,stroke:#d97706,color:#111827
+  classDef pkg fill:#fee2e2,stroke:#dc2626,color:#111827
+  class n0 server
+  class n1 client
+  class n3 pkg
+```
 
 `app/dashboard/page.tsx` → `components/DashboardClient.tsx` ("use client") → `components/DatePicker.tsx` → `moment/moment.js`
 

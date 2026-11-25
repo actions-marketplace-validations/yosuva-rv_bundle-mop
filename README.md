@@ -26,11 +26,14 @@ answers three questions:
 
 <p align="center">
   <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">
-    <img src="docs/assets/pr-comment.png" width="640" alt="A Bundle Mop comment on a pull request: the home page grew by 61.8 kB, a size budget was exceeded, and the import chain shows moment coming in through a use-client component">
+    <img src="docs/assets/pr-comment.png" width="640" alt="A Bundle Mop comment on a pull request: a size budget was exceeded because the home page grew by 61.8 kB. A suggestion says to split the moment code out of the use-client component LastUpdated.tsx and lazy-load it, and a graph shows the import chain from app/page.tsx (Server Component) through LastUpdated.tsx (use client) to moment.js (+61.3 kB)">
   </a>
   <br>
   <sub>A real comment from the <a href="https://github.com/yosuva-rv/bundle-mop-demo">demo app</a>: <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/1">adding moment</a> · <a href="https://github.com/yosuva-rv/bundle-mop-demo/pull/2">lazy-loading a chart (−363 kB)</a></sub>
 </p>
+
+**Tested on real apps:** shadcn/ui and Dify. On Dify, following its suggestion cut 210 kB from the workflow editor's
+first load. [See the results](docs/real-world.md), including what it got wrong and how we fixed it.
 
 ## Quick start
 
@@ -121,6 +124,7 @@ can be up to ~2× too high, so they're shown as estimates and never used for bud
 ## Learn more
 
 - [GitHub Action: inputs, outputs, forks and security](docs/action.md)
+- [Results on real apps (shadcn/ui, Dify)](docs/real-world.md)
 - [Budgets](docs/budgets.md) · [Rules](docs/rules.md) · [How the analyzer data works](docs/analyze-format.md)
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 

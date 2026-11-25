@@ -197,8 +197,18 @@ function assetTypeOf(file) {
   return "other";
 }
 var isClientJs = (file) => file.startsWith("[client-fs]/") && assetTypeOf(file) === "js";
-function parseNextAnalyzeExport(text, options = {}) {
-  return parseNextAnalyzeLines(text.split("\n"), options);
+function parseNextAnalyzeExport(input, options = {}) {
+  return parseNextAnalyzeLines(typeof input === "string" ? input.split("\n") : bufferLines(input), options);
+}
+function* bufferLines(bytes) {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let start = 0;
+  while (start <= buf.length) {
+    let end = buf.indexOf(10, start);
+    if (end === -1) end = buf.length;
+    yield buf.toString("utf8", start, end);
+    start = end + 1;
+  }
 }
 function parseNextAnalyzeLines(lines, options = {}) {
   const warnings = [];
@@ -1118,18 +1128,103 @@ var DOCS = {
   serverComponents: "https://nextjs.org/docs/app/getting-started/server-and-client-components"
 };
 
+// ../cli/src/rules/graph.ts
+var full = /* @__PURE__ */ new WeakMap();
+function staticReach(snap, route, without) {
+  const data = snap.routes.get(route);
+  if (!data) return void 0;
+  if (without === void 0) {
+    const hit = full.get(snap)?.get(route);
+    if (hit) return hit;
+  }
+  const out = { idents: /* @__PURE__ */ new Set(), keys: /* @__PURE__ */ new Set(), packages: /* @__PURE__ */ new Set() };
+  const queue = [];
+  const push = (id) => {
+    if (out.idents.has(id)) return;
+    const m = snap.modules.get(id);
+    if (without !== void 0 && m?.source.key === without) return;
+    out.idents.add(id);
+    queue.push(id);
+    if (m?.layer === "app-client") {
+      out.keys.add(m.source.key);
+      if (m.source.packageName) out.packages.add(m.source.packageName);
+    }
+  };
+  for (const e of data.entries) push(e.moduleIdent);
+  for (let i = 0; i < queue.length; i++) for (const n of snap.modules.get(queue[i])?.sync ?? []) push(n);
+  if (without === void 0) {
+    let byRoute = full.get(snap);
+    if (!byRoute) full.set(snap, byRoute = /* @__PURE__ */ new Map());
+    byRoute.set(route, out);
+  }
+  return out;
+}
+var known = /* @__PURE__ */ new WeakMap();
+function graphKnows(snap, keyOrPackage) {
+  let k = known.get(snap);
+  if (!k) {
+    k = { keys: /* @__PURE__ */ new Set(), packages: /* @__PURE__ */ new Set() };
+    for (const m of snap.modules.values()) {
+      if (m.layer !== "app-client") continue;
+      k.keys.add(m.source.key);
+      if (m.source.packageName) k.packages.add(m.source.packageName);
+    }
+    known.set(snap, k);
+  }
+  return isPackageRollup(keyOrPackage) ? k.packages.has(keyOrPackage.packageName) : k.keys.has(keyOrPackage.key);
+}
+function isStatic(reach, c) {
+  return isPackageRollup(c) ? reach.packages.has(c.packageName) : reach.keys.has(c.key);
+}
+function isPackageRollup(c) {
+  return !!c.packageName && c.key === `pkg:${c.packageName}`;
+}
+
 // ../cli/src/rules/rules.ts
 var grewFirstLoad = (c, min) => c.firstLoad.delta >= min;
 var packageKeys = (route, name) => new Set(route?.parts.filter((p) => p.isClient && p.source.packageName === name).map((p) => p.source.key));
 function isCompilerDrift(ctx, p) {
-  if (!ctx.compilerChanged || p.status !== "changed" || p.versions || !p.packageName) return false;
-  const before = packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName);
-  const after = packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName);
-  return before.size === after.size && [...after].every((k) => before.has(k));
+  return !!ctx.compilerChanged && sameFiles(ctx, p);
+}
+var sameSet2 = (a, b) => a.size === b.size && [...a].every((k) => b.has(k));
+function sameFiles(ctx, p) {
+  if (p.status !== "changed" || p.versions || !p.packageName) return false;
+  return sameSet2(packageKeys(ctx.base.routes.get(ctx.route.route), p.packageName), packageKeys(ctx.pr.routes.get(ctx.route.route), p.packageName));
+}
+function staticPackageKeys(snap, route, name) {
+  if (!graphKnows(snap, { key: `pkg:${name}`, packageName: name })) return void 0;
+  const r = staticReach(snap, route);
+  return r && new Set([...r.keys].filter((k) => k.startsWith(`pkg:${name}/`)));
+}
+function isChunkingDrift(ctx, p) {
+  if (!sameFiles(ctx, p)) return false;
+  const name = p.packageName;
+  const before = staticPackageKeys(ctx.base, ctx.route.route, name);
+  const after = staticPackageKeys(ctx.pr, ctx.route.route, name);
+  return !!before && !!after && sameSet2(before, after);
 }
 var grownPackages = (ctx) => ctx.route.packages.filter(
-  (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p)
+  (p) => p.packageName && !isFrameworkPackage(p.packageName) && grewFirstLoad(p, ctx.options.minBytes) && !isCompilerDrift(ctx, p) && !isChunkingDrift(ctx, p)
 );
+var entryCache = /* @__PURE__ */ new WeakMap();
+function packageEntries(snap) {
+  let out = entryCache.get(snap);
+  if (out) return out;
+  out = /* @__PURE__ */ new Map();
+  for (const m of snap.modules.values()) {
+    if (m.layer !== "app-client") continue;
+    for (const ident of [...m.sync, ...m.async]) {
+      const d = snap.modules.get(ident);
+      const name = d?.source.packageName;
+      if (!d || !name || d.layer !== "app-client" || name === m.source.packageName) continue;
+      let set = out.get(name);
+      if (!set) out.set(name, set = /* @__PURE__ */ new Set());
+      set.add(d.source.key);
+    }
+  }
+  entryCache.set(snap, out);
+  return out;
+}
 var importedBy = (chain) => chain?.importer ? ` Imported by ${shortKey(chain.importer)}.` : "";
 var prRoute = (ctx) => ctx.pr.routes.get(ctx.route.route);
 function packageVersions(route) {
@@ -1153,6 +1248,54 @@ var importPath = (fromKey, toKey) => {
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
 };
+var staticReachable = (ctx, c) => {
+  const r = staticReach(ctx.base, ctx.route.route);
+  return !!r && isStatic(r, c);
+};
+function chunkingOnly(ctx, c) {
+  if (!graphKnows(ctx.base, c) || !graphKnows(ctx.pr, c)) return false;
+  const before = staticReach(ctx.base, ctx.route.route);
+  const after = staticReach(ctx.pr, ctx.route.route);
+  if (!before || !after) return false;
+  return isStatic(before, c) === isStatic(after, c);
+}
+function packageImporters(ctx, pkg) {
+  const all = staticReach(ctx.pr, ctx.route.route);
+  const out = /* @__PURE__ */ new Set();
+  for (const id of all?.idents ?? []) {
+    const m = ctx.pr.modules.get(id);
+    if (!m || m.layer !== "app-client" || m.source.kind !== "app" && m.source.kind !== "workspace") continue;
+    if (m.sync.some((d) => ctx.pr.modules.get(d)?.source.packageName === pkg)) out.add(m.source.key);
+  }
+  return [...out].sort();
+}
+function lazyTarget(ctx, pkg, chain) {
+  const route = ctx.route.route;
+  const all = staticReach(ctx.pr, route);
+  if (!all?.packages.has(pkg)) return void 0;
+  const steps = chain.steps;
+  const boundary = steps.findIndex((s) => s.isClientBoundary);
+  const importer = steps.findIndex((s) => s.key === chain.importer);
+  if (boundary < 0 || importer <= boundary) return void 0;
+  for (let i = importer; i > boundary; i--) {
+    const s = steps[i];
+    if (!s || s.kind !== "app" && s.kind !== "workspace") continue;
+    const without = staticReach(ctx.pr, route, s.key);
+    if (!without || without.packages.has(pkg)) continue;
+    const gone = new Set([...all.keys].filter((k) => !without.keys.has(k)));
+    const saves = (prRoute(ctx)?.parts ?? []).filter((p) => p.isClient && !p.isLazy && gone.has(p.source.key)).reduce((n, p) => n + p.size, 0);
+    const importers = /* @__PURE__ */ new Set();
+    for (const id of all.idents) {
+      const m = ctx.pr.modules.get(id);
+      if (!m || m.layer !== "app-client" || m.source.key === s.key || m.source.kind !== "app" && m.source.kind !== "workspace") continue;
+      if (m.sync.some((d) => ctx.pr.modules.get(d)?.source.key === s.key)) importers.add(m.source.key);
+    }
+    const parent = steps[i - 1]?.key;
+    const ordered = [...importers].sort((a, b) => Number(b === parent) - Number(a === parent) || a.localeCompare(b));
+    return { key: s.key, importers: ordered, saves };
+  }
+  return void 0;
+}
 var heavyPackage = {
   id: "heavy-package",
   description: "A known-heavy package was added to (or grew in) first-load JS; suggests a lighter alternative.",
@@ -1213,27 +1356,44 @@ var lazyLoadCandidate = {
     const out = [];
     for (const p of ctx.route.packages) {
       const chain = p.chain;
-      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p)) continue;
+      if (!p.packageName || isFrameworkPackage(p.packageName) || p.firstLoad.delta < ctx.options.largeBytes || isCompilerDrift(ctx, p) || isChunkingDrift(ctx, p)) continue;
       if (!chain?.clientBoundary || chain.viaDynamicImport || !chain.importer) continue;
-      const steps = chain.steps;
-      const importerIdx = steps.findIndex((s) => s.key === chain.importer);
-      const parent = importerIdx > 0 ? steps[importerIdx - 1] : void 0;
-      const importer = chain.importer;
-      let suggestion = `Load the component that uses ${p.packageName} with next/dynamic so it's fetched only when rendered.`;
-      if (parent && (parent.kind === "app" || parent.kind === "workspace")) {
-        const name = componentName(importer);
-        suggestion += `
+      const target = lazyTarget(ctx, p.packageName, chain);
+      let suggestion;
+      let splitFrom;
+      if (target) {
+        const files = target.importers;
+        suggestion = `Load ${shortKey(target.key)} with next/dynamic so it (and ${p.packageName}) is fetched only when it renders.`;
+        if (target.saves > 0) suggestion += ` That moves about ${formatBytes(target.saves)} out of first-load JS on this route.`;
+        if (files[0]) {
+          suggestion += `
 
 \`\`\`tsx
-// ${shortKey(parent.key)}
+// ${shortKey(files[0])}
 import dynamic from 'next/dynamic';
-const ${name} = dynamic(() => import('${importPath(parent.key, importer)}'));
+const ${componentName(target.key)} = dynamic(() => import('${importPath(files[0], target.key)}'));
 \`\`\``;
+          if (files.length > 1) suggestion += `
+
+Change the import in each file that imports it: ${files.map(shortKey).join(", ")}.`;
+        }
+      } else {
+        const files = packageImporters(ctx, p.packageName).sort((a, b) => Number(b === chain.importer) - Number(a === chain.importer));
+        const shown = files.slice(0, 5).map(shortKey).join(", ");
+        if (files.length === 1 && files[0] === chain.clientBoundary) {
+          splitFrom = files[0];
+          suggestion = `The "use client" file ${shortKey(files[0])} imports ${p.packageName} itself. Move the code that uses ${p.packageName} into a child component, and load that with next/dynamic inside ${shortKey(files[0])}, so ${p.packageName} is fetched only when that part renders.`;
+        } else {
+          suggestion = `Lazy-load the feature that uses ${p.packageName} with next/dynamic. No single file removes it from this route: ${files.length} ${files.length === 1 ? "file imports" : "files import"} it statically (${shown}${files.length > 5 ? ", \u2026" : ""}). Wrap the component that renders the ones you can defer, and measure.`;
+        }
       }
+      if (target) suggestion += `
+
+This assumes the file's default export is the component; for a named export use \`import('\u2026').then((m) => m.Name)\`.`;
       out.push({
         ruleId: this.id,
         severity: "info",
-        title: `Lazy-load ${shortKey(importer)} to keep ${p.packageName} out of first-load JS`,
+        title: target ? `Lazy-load ${shortKey(target.key)} to keep ${p.packageName} out of first-load JS` : splitFrom ? `Split the ${p.packageName} code out of ${shortKey(splitFrom)} and lazy-load it` : `Lazy-load the code that uses ${p.packageName} to keep it out of first-load JS`,
         message: `${p.packageName} adds ${formatBytes(p.firstLoad.delta)} to first-load JS.${importedBy(chain)}`,
         suggestion,
         docs: DOCS.lazyLoading,
@@ -1257,6 +1417,8 @@ var optimizePackageImports = {
       if (isOptimizedByNext(name)) continue;
       const modules = new Set(parts.filter((x) => x.source.packageName === name).map((x) => x.source.key));
       if (modules.size < ctx.options.moduleThreshold) continue;
+      const entries = packageEntries(ctx.pr).get(name);
+      if (entries && [...modules].filter((k) => entries.has(k)).length * 2 > modules.size) continue;
       const f = {
         ruleId: this.id,
         severity: "info",
@@ -1329,10 +1491,21 @@ var lostLazyLoading = {
       if (c.movedTo !== "firstLoad" || c.firstLoad.delta < ctx.options.minBytes) continue;
       if (c.packageName && isFrameworkPackage(c.packageName)) continue;
       const label = c.packageName ?? shortKey(c.key);
-      const f = {
+      const title = `${label} moved from lazy to first-load JS (+${formatBytes(c.firstLoad.delta)})`;
+      const f = chunkingOnly(ctx, c) ? {
+        // The bytes are real, but no import explains them: blaming one would send people hunting for nothing.
+        ruleId: this.id,
+        severity: "info",
+        title,
+        message: `No import change explains this: ${label} ${staticReachable(ctx, c) ? "was already imported statically in the base branch" : "is still only loaded with a dynamic import"}. The bundler now puts a copy of it in a chunk this route loads up front. This is usually a side effect of a change elsewhere, such as a new next/dynamic import that changed how shared code is split.`,
+        suggestion: "Nothing to undo on this route. If the size matters, look at the next/dynamic changes in this PR.",
+        docs: DOCS.lazyLoading,
+        subject: c.key,
+        bytes: c.firstLoad.delta
+      } : {
         ruleId: this.id,
         severity: "warning",
-        title: `${label} moved from lazy to first-load JS (+${formatBytes(c.firstLoad.delta)})`,
+        title,
         message: `${label} was loaded with a dynamic import in the base branch; now a static import pulls it into first-load JS.${importedBy(c.chain)}`,
         suggestion: "Check whether a next/dynamic wrapper was removed or a new static import was added along the chain below.",
         docs: DOCS.lazyLoading,
@@ -1454,6 +1627,37 @@ function formatChainMarkdown(chain) {
     return `${code(shortKey(s.key))}${tags.length ? ` (${tags.join(", ")})` : ""}`;
   }).join(" \u2192 ");
 }
+var mermaidText = (s) => s.replace(/#/g, "#35;").replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+var nodeLabel = (key) => {
+  const parts = shortKey(key).split("/");
+  return parts.length > 3 ? `\u2026/${parts.slice(-3).join("/")}` : parts.join("/");
+};
+function formatChainMermaid(chain, targetNote) {
+  const lines = ["```mermaid", `flowchart ${chain.steps.length <= 4 ? "LR" : "TD"}`];
+  const classes = { server: [], client: [], pkg: [] };
+  chain.steps.forEach((s, i) => {
+    const last = i === chain.steps.length - 1;
+    const tags = [];
+    if (s.isServerComponent) tags.push("Server Component");
+    if (s.isClientBoundary) tags.push('"use client"');
+    if (s.isBarrel) tags.push("barrel");
+    if (last && targetNote) tags.push(targetNote);
+    const label = [nodeLabel(s.key), ...tags].map(mermaidText).join("<br/>");
+    lines.push(`  n${i}["${label}"]`);
+    if (i > 0) lines.push(s.viaDynamicImport ? `  n${i - 1} -. dynamic import .-> n${i}` : `  n${i - 1} --> n${i}`);
+    if (last && s.packageName) classes.pkg.push(`n${i}`);
+    else if (s.isClientBoundary) classes.client.push(`n${i}`);
+    else if (s.isServerComponent) classes.server.push(`n${i}`);
+  });
+  lines.push(
+    "  classDef server fill:#e0e7ff,stroke:#4f46e5,color:#111827",
+    "  classDef client fill:#fef3c7,stroke:#d97706,color:#111827",
+    "  classDef pkg fill:#fee2e2,stroke:#dc2626,color:#111827"
+  );
+  for (const [name, ids] of Object.entries(classes)) if (ids.length) lines.push(`  class ${ids.join(",")} ${name}`);
+  lines.push("```");
+  return lines.join("\n");
+}
 function headline(diff, shown, findings, min) {
   const nSug = findings.length;
   const sug = nSug ? ` \xB7 ${nSug} suggestion${nSug === 1 ? "" : "s"}` : "";
@@ -1522,7 +1726,7 @@ function findingBody(f) {
   if (f.docs) lines.push(`[Docs](${f.docs})`, "");
   return lines;
 }
-function findingGroup(group, withChain) {
+function findingGroup(group, withChain, open = false) {
   const [head, ...rest] = group;
   const lines = [`#### ${SEVERITY_ICON[head.severity]} ${head.title}`, `<sub>${head.ruleId} \xB7 ${routeList(head.routes)}</sub>`, "", ...findingBody(head)];
   for (const f of rest) {
@@ -1530,7 +1734,10 @@ function findingGroup(group, withChain) {
     lines.push(`**${SEVERITY_ICON[f.severity]} ${f.title}** <sub>${f.ruleId}${routes}</sub>`, "", ...findingBody(f));
   }
   const chain = group.find((f) => f.chain && f.chain.steps.length > 1)?.chain;
-  if (withChain && chain) lines.push("<details><summary>Import chain</summary>", "", formatChainMarkdown(chain), "", "</details>", "");
+  if (withChain && chain) {
+    const note = head.bytes > 0 ? `+${formatBytes(head.bytes)}` : void 0;
+    lines.push(`<details${open ? " open" : ""}><summary>Import chain</summary>`, "", formatChainMermaid(chain, note), "", formatChainMarkdown(chain), "", "</details>", "");
+  }
   return lines;
 }
 function groupBySubject(findings) {
@@ -1619,7 +1826,7 @@ function render(diff, options, detail) {
   }
   if (findings.length && detail !== "minimal") {
     out.push("### Suggestions", "");
-    for (const g of groupBySubject(findings)) out.push(...findingGroup(g, detail === "full"));
+    groupBySubject(findings).forEach((g, i) => out.push(...findingGroup(g, detail === "full", i === 0)));
   } else if (findings.length) {
     out.push("### Suggestions", "", ...findings.slice(0, 20).map((f) => `- ${SEVERITY_ICON[f.severity]} ${f.title} <sub>(${f.ruleId})</sub>`), "");
   }
@@ -1681,7 +1888,7 @@ Diffs two saved \`next analyze export\` files. To compare your branch with main 
 ${REPORT_USAGE}`;
 
 // ../cli/src/index.ts
-var VERSION = "0.2.0";
+var VERSION = "0.3.1";
 var HELP = `bundle-mop v${VERSION}
 
 Explains every PR's Next.js bundle change: which import, through which chain,
@@ -1828,8 +2035,8 @@ async function runAction(env = process.env) {
     config.source = rel && !rel.startsWith("..") && !path8.isAbsolute(rel) ? rel.replace(/\\/g, "/") : configFile;
     log.info(`Bundle Mop: budgets from ${config.source} (${config.budgets.length} entr${config.budgets.length === 1 ? "y" : "ies"})`);
   }
-  const base = parseNextAnalyzeExport(fs10.readFileSync(baseFile, "utf8"));
-  const head = parseNextAnalyzeExport(fs10.readFileSync(prFile, "utf8"));
+  const base = parseNextAnalyzeExport(fs10.readFileSync(baseFile));
+  const head = parseNextAnalyzeExport(fs10.readFileSync(prFile));
   const { diff, findings, budgets } = analyze(base, head, { minBytes: inputs.minBytes, ...config ? { config } : {} });
   const markdown = renderMarkdown(diff, { findings, budgets, minBytes: inputs.minBytes });
   const reportPath = path8.join(tmp, "bundle-mop.md");

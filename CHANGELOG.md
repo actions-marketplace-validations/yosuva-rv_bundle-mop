@@ -3,9 +3,37 @@
 All notable changes to Bundle Mop. The CLI (`bundle-mop` on npm) and the GitHub Action (`yosuva-rv/bundle-mop`)
 are versioned together. Until 1.0, minor versions may change output formats and defaults.
 
-## Unreleased
+## 0.3.1 (2026-11-24)
 
-Fixes from running Bundle Mop on real open-source apps (shadcn/ui, Dify, Cal.com):
+- `lazy-load-candidate`: when the `"use client"` file imports the package itself, it now says to split that code into a
+  child component and lazy-load it, instead of the contradictory "No single file removes it: 1 files import it"
+  (a 0.2.2 regression, seen on the demo app's PR comment).
+
+## 0.3.0 (2026-11-24)
+
+- **Import chain graph in the PR comment.** Each suggestion's import chain is drawn as a Mermaid flowchart (GitHub
+  renders it in comments and job summaries): the Server Component page, the `"use client"` boundary and the package are
+  colored, dynamic imports are dashed, and the package shows its size. The worst suggestion's chain is open. The text
+  chain stays under the graph. `formatChainMermaid` is exported from the library.
+- PR comment format changed (golden file updated).
+
+## 0.2.2 (2026-11-24)
+
+Found by applying a Bundle Mop suggestion to Dify and measuring the result (it saved 210 kB):
+
+- **`lazy-load-candidate` wraps the right file.** It now picks the deepest file that every static path to the package
+  goes through, lists every file that imports it, and estimates the saving ("moves about 61.6 kB out of first-load
+  JS"). Before, it named the file that imports the package, which on Dify exported a React context, not a component.
+  When no single file removes the package, it lists the files that import it instead of guessing a snippet.
+- **`lost-lazy-loading` no longer blames an import that didn't change.** When code moved into first-load JS only
+  because the bundler re-split chunks, the finding says so (info, not warning).
+- **No suggestions for chunking drift:** packages that grew only because of extra copies in up-front chunks (same
+  version, same files, same static imports) are not flagged, like compiler drift after a Next.js upgrade.
+- PR comment: the `lazy-load-candidate` text changed (golden file updated).
+
+## 0.2.1 (2026-11-24)
+
+Fixes from running Bundle Mop on real open-source apps (shadcn/ui and Dify):
 
 - **Crash on API routes fixed.** Route handlers (`app/**/route.ts`) export an entry without `entry_kind`; one such
   route made the whole run fail. Unknown extra fields (like `client_references`) are ignored. Errors now say where
@@ -19,6 +47,12 @@ Fixes from running Bundle Mop on real open-source apps (shadcn/ui, Dify, Cal.com
   ignore packages that only changed size because the new compiler re-minified them (same version, same files).
 - **Headline** picks the app's own routes, not Next-internal ones a framework upgrade adds (`/_global-error`).
 - **16× faster diffs on big apps:** import chains are looked up from an index (shadcn/ui: 1 min 28 s → 5.5 s).
+- **Very large apps work.** Dify's export is over 512 MB, more than the longest string Node can hold, so reading
+  it crashed with `Cannot create a string longer than 0x1fffffe8 characters`. Exports are now parsed from bytes,
+  line by line; `parseNextAnalyzeExport` accepts a `Buffer` as well as a string.
+- **No barrel advice for subpath imports.** `optimize-package-imports` told Dify to stop importing `@lexical/react` from
+  its index, but Dify already imports every module by subpath. The rule now fires only when a few entry modules
+  (a barrel) pull in most of the package.
 - `compare`: cached base analyses are gzipped (a large app's export is ~200 MB of JSON); 0.2.0 caches still work.
 - `compare` and the Action: base checkouts enable `core.longpaths`, so repos with deep paths work on Windows.
 

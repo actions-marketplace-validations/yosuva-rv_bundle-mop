@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AnalyzeSnapshot } from '../src/adapter/index.js';
 import { diffSnapshots } from '../src/model/diff.js';
-import { code, COMMENT_MARKER, renderMarkdown } from '../src/report/markdown.js';
+import type { ChainStep, ImportChain } from '../src/model/chains.js';
+import { code, COMMENT_MARKER, formatChainMermaid, renderMarkdown } from '../src/report/markdown.js';
 import type { MarkdownOptions } from '../src/report/markdown.js';
 import { runRules } from '../src/rules/index.js';
 import { fakeSnapshot, pnpm } from './helpers/fake-export.js';
@@ -126,5 +127,49 @@ describe('markdown: edge cases', () => {
     expect(tiny.length).toBeLessThanOrEqual(3_000);
     expect(tiny.startsWith(COMMENT_MARKER)).toBe(true);
     expect(report(base, pr).length).toBeLessThanOrEqual(60_000);
+  });
+});
+
+describe('formatChainMermaid', () => {
+  const step = (key: string, extra: Partial<ChainStep> = {}): ChainStep => ({
+    key,
+    kind: key.startsWith('pkg:') ? 'package' : 'app',
+    isClientBoundary: false,
+    viaDynamicImport: false,
+    isServerComponent: false,
+    isBarrel: false,
+    idents: [],
+    ...extra,
+  });
+  const chainOf = (steps: ChainStep[]): ImportChain => ({ route: '/', steps, entryKind: 'server', viaDynamicImport: steps.some((s) => s.viaDynamicImport) });
+
+  it('draws dynamic imports as dashed edges and styles the boundary and the package', () => {
+    const md = formatChainMermaid(
+      chainOf([step('app:app/page.tsx', { isServerComponent: true }), step('app:components/Shell.tsx', { isClientBoundary: true }), step('pkg:chart.js/dist/chart.js', { packageName: 'chart.js', viaDynamicImport: true })]),
+      '+120.0 kB',
+    );
+    expect(md.startsWith('```mermaid\nflowchart LR\n')).toBe(true);
+    expect(md).toContain('  n1 -. dynamic import .-> n2');
+    expect(md).toContain('  n0 --> n1');
+    expect(md).toContain('n2["chart.js/dist/chart.js<br/>+120.0 kB"]');
+    expect(md).toContain('  class n0 server\n  class n1 client\n  class n2 pkg');
+    expect(md.endsWith('\n```')).toBe(true);
+  });
+
+  it('escapes label text and shortens long paths; long chains go top down', () => {
+    const md = formatChainMermaid(
+      chainOf([
+        step('app:app/(shop)/[slug]/page.tsx'),
+        step('app:a/b.tsx'),
+        step('app:a/c.tsx'),
+        step('app:app/components/workflow/note-node/note-editor/context.tsx', { isBarrel: true }),
+        step('pkg:x/"odd"#name.js', { packageName: 'x' }),
+      ]),
+    );
+    expect(md).toContain('flowchart TD');
+    expect(md).toContain('n0["…/(shop)/[slug]/page.tsx"]'); // brackets and parens are fine inside quotes
+    expect(md).toContain('n3["…/note-node/note-editor/context.tsx<br/>barrel"]');
+    expect(md).toContain('n4["x/#quot;odd#quot;#35;name.js"]');
+    expect(md).not.toMatch(/n\d\["[^"\n]*"[^\]\n]*"\]/); // no raw quote inside a label
   });
 });

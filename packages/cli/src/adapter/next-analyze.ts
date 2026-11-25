@@ -76,9 +76,24 @@ export function assetTypeOf(file: string): AssetType {
 /** Browser JavaScript only: CSS and fonts are client outputs too, but not JS. */
 const isClientJs = (file: string) => file.startsWith('[client-fs]/') && assetTypeOf(file) === 'js';
 
-/** Parses the full text of `next analyze export` output. */
-export function parseNextAnalyzeExport(text: string, options: ParseOptions = {}): AnalyzeSnapshot {
-  return parseNextAnalyzeLines(text.split('\n'), options);
+/**
+ * Parses `next analyze export` output, as text or raw UTF-8 bytes. Pass bytes for big apps: an export can be larger
+ * than the biggest string V8 can hold (~512 MB), so bytes are split into lines without ever decoding them whole.
+ */
+export function parseNextAnalyzeExport(input: string | Uint8Array, options: ParseOptions = {}): AnalyzeSnapshot {
+  return parseNextAnalyzeLines(typeof input === 'string' ? input.split('\n') : bufferLines(input), options);
+}
+
+/** Lines of UTF-8 bytes. Safe to split on 0x0A: that byte never occurs inside a multi-byte UTF-8 sequence. */
+export function* bufferLines(bytes: Uint8Array): Generator<string> {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let start = 0;
+  while (start <= buf.length) {
+    let end = buf.indexOf(0x0a, start);
+    if (end === -1) end = buf.length;
+    yield buf.toString('utf8', start, end);
+    start = end + 1;
+  }
 }
 
 /** Parses JSONL lines (blank lines ignored). Line numbers in errors are 1-based. */
